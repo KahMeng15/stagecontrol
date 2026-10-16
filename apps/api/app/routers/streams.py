@@ -13,9 +13,12 @@ from app.database import get_db
 from app.models.enums import EventRole, has_sufficient_role
 from app.models.event import Event
 from app.models.membership import Membership
-from app.models.recording import Recording
+from app.models.recording import Recording, VideoMarker
 from app.models.settings import SystemSettings
 from app.schemas.recording import (
+    MarkerCreate,
+    MarkerResponse,
+    MarkerUpdate,
     RecordingResponse,
     RecordingUpdate,
     StreamStatusResponse,
@@ -119,6 +122,28 @@ async def get_stream_status(
         stream_key=stream_key if can_view_key else None
     )
 
+def format_friendly_recording_title(file_stem: str, file_mtime: datetime | None = None) -> str:
+    """
+    Formats recording filename stems into a user-friendly title:
+    e.g. '01:16:46 pm 16 Oct 2026'
+    """
+    dt = None
+    try:
+        dt = datetime.strptime(file_stem, "%Y-%m-%d_%H-%M-%S-%f")
+    except Exception:
+        try:
+            clean_stem = file_stem.split("_")[0] + "_" + file_stem.split("_")[1].split("-")[0]
+            dt = datetime.strptime(clean_stem, "%Y-%m-%d_%H-%M-%S")
+        except Exception:
+            if file_mtime:
+                dt = file_mtime
+
+    if dt:
+        time_part = dt.strftime("%I:%M:%S %p").lower()
+        return f"{time_part} {dt.day} {dt.strftime('%b %Y')}"
+
+    return f"Take - {file_stem}"
+
 @router.get("/recordings", response_model=list[RecordingResponse])
 def list_event_recordings(
     request: Request,
@@ -143,16 +168,14 @@ def list_event_recordings(
                 Recording.filename == rel_path
             ).first()
 
+            mtime = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
+            friendly_title = format_friendly_recording_title(file.stem, mtime)
+
             if not existing:
                 file_size = file.stat().st_size
-                mtime = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
-                # Formulate friendly title e.g. "Take 2026-10-16 21:05"
-                timestamp_str = file.stem.replace("_", " ").replace("-", ":", 2)
-                title = f"Recording - {file.stem}"
-
                 new_rec = Recording(
                     event_id=event.id,
-                    title=title,
+                    title=friendly_title,
                     filename=rel_path,
                     file_size_bytes=file_size,
                     duration_seconds=0.0,
@@ -160,6 +183,9 @@ def list_event_recordings(
                     created_at=mtime
                 )
                 db.add(new_rec)
+            elif existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
+                existing.title = friendly_title
+
         db.commit()
 
     recordings = (
@@ -334,5 +360,145 @@ def delete_recording(
             pass
 
     db.delete(recording)
+    db.commit()
+    return None
+
+# =========================================================================
+# Video Timeline Markers & Chapters
+# =========================================================================
+
+@router.get("/markers", response_model=list[MarkerResponse])
+def list_markers(
+    recording_id: str | None = None,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+    db: Session = Depends(get_db)
+):
+    """
+    Returns all video chapter markers for this event.
+    Optionally filters by recording_id.
+    """
+    event, _ = event_and_member
+    query = db.query(VideoMarker).filter(VideoMarker.event_id == event.id)
+    if recording_id:
+        query = query.filter(VideoMarker.recording_id == recording_id)
+    
+    markers = query.order_by(
+        VideoMarker.timestamp_seconds.asc(),
+        VideoMarker.created_at.asc()
+    ).all()
+    return markers
+
+@router.post("/markers", response_model=MarkerResponse, status_code=status.HTTP_201_CREATED)
+def create_marker(
+    marker_in: MarkerCreate,
+    event_and_member: tuple[Event, Membership] = Depends(require_min_role(EventRole.CREW)),
+    db: Session = Depends(get_db)
+):
+    """
+    Creates a new chapter / moment marker on the video timeline.
+    Can be created during a live stream (auto-linked to active take) or in replay.
+    """
+    event, member = event_and_member
+    recording_id = marker_in.recording_id
+    timestamp_seconds = marker_in.timestamp_seconds
+
+    # If created live without explicit recording_id, try linking to the currently active recording
+    if not recording_id:
+        stream_key = event.stream_key
+        event_rec_dir = RECORDINGS_DIR / "live" / stream_key
+        if event_rec_dir.exists():
+            files = sorted(event_rec_dir.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+            if files:
+                latest_file = files[0]
+                # Check if file was modified recently (within 60 seconds -> active live stream recording)
+                is_active = (datetime.now(timezone.utc).timestamp() - latest_file.stat().st_mtime) < 60
+                rel_path = f"live/{stream_key}/{latest_file.name}"
+                rec = db.query(Recording).filter(Recording.filename == rel_path).first()
+                if not rec:
+                    rec = Recording(
+                        event_id=event.id,
+                        title=format_friendly_recording_title(latest_file.stem),
+                        filename=rel_path,
+                        file_size_bytes=latest_file.stat().st_size,
+                        duration_seconds=0.0,
+                        status="recording" if is_active else "ready"
+                    )
+                    db.add(rec)
+                    db.commit()
+                    db.refresh(rec)
+                recording_id = rec.id
+
+                # If timestamp_seconds wasn't provided, calculate offset from start of file
+                if timestamp_seconds is None:
+                    try:
+                        # File format: YYYY-MM-DD_HH-MM-SS-ffffff.mp4
+                        stem = latest_file.stem
+                        start_time = datetime.strptime(stem, "%Y-%m-%d_%H-%M-%S-%f").replace(tzinfo=timezone.utc)
+                        timestamp_seconds = max(0.0, (datetime.now(timezone.utc) - start_time).total_seconds())
+                    except Exception:
+                        timestamp_seconds = 0.0
+
+    marker = VideoMarker(
+        event_id=event.id,
+        recording_id=recording_id,
+        title=marker_in.title.strip(),
+        description=marker_in.description.strip() if marker_in.description else None,
+        timestamp_seconds=timestamp_seconds,
+        color=marker_in.color or "blue",
+        created_by_id=member.user_id if member.user_id and not member.id.startswith("guest_") else None,
+        creator_callsign=member.callsign or (member.user.full_name or member.user.username if member.user else "Crew")
+    )
+    db.add(marker)
+    db.commit()
+    db.refresh(marker)
+    return marker
+
+@router.patch("/markers/{marker_id}", response_model=MarkerResponse)
+def update_marker(
+    marker_id: str,
+    marker_in: MarkerUpdate,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+    db: Session = Depends(get_db)
+):
+    event, member = event_and_member
+    marker = db.query(VideoMarker).filter(VideoMarker.id == marker_id, VideoMarker.event_id == event.id).first()
+    if not marker:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marker not found")
+
+    # Only creator, SM or Admin can edit
+    can_edit = has_sufficient_role(member.role, EventRole.STAGE_MANAGER) or (marker.created_by_id and marker.created_by_id == member.user_id)
+    if not can_edit:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to edit this marker")
+
+    if marker_in.title is not None:
+        marker.title = marker_in.title.strip()
+    if marker_in.description is not None:
+        marker.description = marker_in.description.strip() if marker_in.description else None
+    if marker_in.timestamp_seconds is not None:
+        marker.timestamp_seconds = marker_in.timestamp_seconds
+    if marker_in.color is not None:
+        marker.color = marker_in.color
+
+    marker.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(marker)
+    return marker
+
+@router.delete("/markers/{marker_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_marker(
+    marker_id: str,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+    db: Session = Depends(get_db)
+):
+    event, member = event_and_member
+    marker = db.query(VideoMarker).filter(VideoMarker.id == marker_id, VideoMarker.event_id == event.id).first()
+    if not marker:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Marker not found")
+
+    can_delete = has_sufficient_role(member.role, EventRole.STAGE_MANAGER) or (marker.created_by_id and marker.created_by_id == member.user_id)
+    if not can_delete:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="You do not have permission to delete this marker")
+
+    db.delete(marker)
     db.commit()
     return None

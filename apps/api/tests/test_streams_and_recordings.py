@@ -136,7 +136,55 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     assert dl_resp.status_code == 200
     assert dl_resp.content == mock_content
 
-    # 6. Test rename recording
+    # 6. Test Video Chapters & Markers
+    # 6a. Create marker for recording
+    marker_resp = client.post(
+        f"/api/events/{event.id}/markers",
+        json={
+            "title": "Act 1 Scene 2 Starts",
+            "description": "Lead actor entrance on stage right",
+            "timestamp_seconds": 12.5,
+            "recording_id": rec_id,
+            "color": "purple",
+        },
+        headers=headers,
+    )
+    assert marker_resp.status_code == 201
+    marker_data = marker_resp.json()
+    assert marker_data["title"] == "Act 1 Scene 2 Starts"
+    assert marker_data["timestamp_seconds"] == 12.5
+    assert marker_data["recording_id"] == rec_id
+    marker_id = marker_data["id"]
+
+    # 6b. List markers filtered by recording
+    list_markers_resp = client.get(
+        f"/api/events/{event.id}/markers?recording_id={rec_id}",
+        headers=headers,
+    )
+    assert list_markers_resp.status_code == 200
+    markers_list = list_markers_resp.json()
+    assert len(markers_list) == 1
+    assert markers_list[0]["id"] == marker_id
+
+    # 6c. Update marker
+    update_marker_resp = client.patch(
+        f"/api/events/{event.id}/markers/{marker_id}",
+        json={"title": "Act 1 Scene 2 - Lead Vocal", "color": "emerald"},
+        headers=headers,
+    )
+    assert update_marker_resp.status_code == 200
+    assert update_marker_resp.json()["title"] == "Act 1 Scene 2 - Lead Vocal"
+    assert update_marker_resp.json()["color"] == "emerald"
+
+    # 6d. Delete marker
+    del_marker_resp = client.delete(f"/api/events/{event.id}/markers/{marker_id}", headers=headers)
+    assert del_marker_resp.status_code == 204
+
+    # Verify deleted
+    list_after_marker_del = client.get(f"/api/events/{event.id}/markers", headers=headers).json()
+    assert all(m["id"] != marker_id for m in list_after_marker_del)
+
+    # 7. Test rename recording
     rename_resp = client.patch(
         f"/api/events/{event.id}/recordings/{rec_id}",
         json={"title": "Act 1 Rehearsal Take"},
@@ -145,7 +193,7 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     assert rename_resp.status_code == 200
     assert rename_resp.json()["title"] == "Act 1 Rehearsal Take"
 
-    # 7. Test delete recording
+    # 8. Test delete recording
     del_resp = client.delete(f"/api/events/{event.id}/recordings/{rec_id}", headers=headers)
     assert del_resp.status_code == 204
 

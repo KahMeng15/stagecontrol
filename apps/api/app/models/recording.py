@@ -21,3 +21,25 @@ class Recording(Base):
 
     # Relationships
     event = relationship("Event", back_populates="recordings")
+    markers = relationship("VideoMarker", back_populates="recording", cascade="all, delete-orphan", order_by="VideoMarker.timestamp_seconds")
+
+class VideoMarker(Base):
+    __tablename__ = "video_markers"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    event_id = Column(String(36), ForeignKey("events.id", ondelete="CASCADE"), nullable=False, index=True)
+    recording_id = Column(String(36), ForeignKey("recordings.id", ondelete="CASCADE"), nullable=True, index=True)
+    title = Column(String(150), nullable=False)
+    description = Column(Text, nullable=True)
+    timestamp_seconds = Column(Float, nullable=True)
+    color = Column(String(30), default="blue", nullable=False)
+    created_by_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    creator_callsign = Column(String(100), nullable=True)
+
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    # Relationships
+    event = relationship("Event", back_populates="markers")
+    recording = relationship("Recording", back_populates="markers")
+    created_by = relationship("User")

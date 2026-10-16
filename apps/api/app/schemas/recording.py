@@ -35,3 +35,31 @@ class RecordingResponse(BaseModel):
 
 class RecordingUpdate(BaseModel):
     title: str
+
+class MarkerCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    timestamp_seconds: Optional[float] = None
+    recording_id: Optional[str] = None
+    color: Optional[str] = "blue"
+
+class MarkerUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    timestamp_seconds: Optional[float] = None
+    color: Optional[str] = None
+
+class MarkerResponse(BaseModel):
+    id: str
+    event_id: str
+    recording_id: Optional[str] = None
+    title: str
+    description: Optional[str] = None
+    timestamp_seconds: Optional[float] = None
+    color: str
+    created_by_id: Optional[str] = None
+    creator_callsign: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)

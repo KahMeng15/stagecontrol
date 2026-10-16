@@ -40,3 +40,4 @@ class Event(Base):
     memberships = relationship("Membership", back_populates="event", cascade="all, delete-orphan")
     scripts = relationship("Script", back_populates="event", cascade="all, delete-orphan")
     recordings = relationship("Recording", back_populates="event", cascade="all, delete-orphan")
+    markers = relationship("VideoMarker", back_populates="event", cascade="all, delete-orphan")

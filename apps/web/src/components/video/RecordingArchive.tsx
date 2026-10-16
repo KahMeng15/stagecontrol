@@ -21,8 +21,12 @@ import {
   HardDrive,
   Clock,
   AlertCircle,
+  Flag,
+  Bookmark,
+  Plus,
+  Tag,
 } from 'lucide-react';
-import { api, Recording } from '@/lib/api';
+import { api, Recording, VideoMarker } from '@/lib/api';
 
 interface RecordingArchiveProps {
   eventId: string;
@@ -51,6 +55,15 @@ export function RecordingArchive({
   const [autoPlayNext, setAutoPlayNext] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
 
+  // Markers & chapters state
+  const [markers, setMarkers] = useState<VideoMarker[]>([]);
+  const [showAddChapterModal, setShowAddChapterModal] = useState(false);
+  const [chapterTitle, setChapterTitle] = useState('');
+  const [chapterDescription, setChapterDescription] = useState('');
+  const [chapterColor, setChapterColor] = useState('purple');
+  const [chapterTime, setChapterTime] = useState<number>(0);
+  const [savingChapter, setSavingChapter] = useState(false);
+
   // Stored JWT token for native <video> stream & download requests
   const [token, setToken] = useState<string | null>(null);
 
@@ -68,6 +81,70 @@ export function RecordingArchive({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  const loadMarkers = useCallback(async () => {
+    if (!selectedRecording) {
+      setMarkers([]);
+      return;
+    }
+    try {
+      const data = await api.listMarkers(eventId, selectedRecording.id);
+      setMarkers(data);
+    } catch (err) {
+      console.error('Failed to load markers:', err);
+    }
+  }, [eventId, selectedRecording]);
+
+  useEffect(() => {
+    loadMarkers();
+  }, [loadMarkers]);
+
+  const handleOpenAddChapter = () => {
+    const t = videoRef.current ? videoRef.current.currentTime : currentTime;
+    setChapterTime(Math.round(t * 10) / 10);
+    setChapterTitle('');
+    setChapterDescription('');
+    setShowAddChapterModal(true);
+  };
+
+  const handleCreateChapter = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chapterTitle.trim() || !selectedRecording) return;
+    setSavingChapter(true);
+    try {
+      const newMarker = await api.createMarker(eventId, {
+        title: chapterTitle.trim(),
+        description: chapterDescription.trim() || undefined,
+        timestamp_seconds: chapterTime,
+        recording_id: selectedRecording.id,
+        color: chapterColor,
+      });
+      setMarkers((prev) =>
+        [...prev, newMarker].sort((a, b) => (a.timestamp_seconds || 0) - (b.timestamp_seconds || 0))
+      );
+      setShowAddChapterModal(false);
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to add chapter mark');
+    } finally {
+      setSavingChapter(false);
+    }
+  };
+
+  const handleDeleteMarker = async (markerId: string) => {
+    try {
+      await api.deleteMarker(eventId, markerId);
+      setMarkers((prev) => prev.filter((m) => m.id !== markerId));
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to delete chapter');
+    }
+  };
+
+  const handleJumpToMarker = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined || !videoRef.current) return;
+    videoRef.current.currentTime = seconds;
+    setCurrentTime(seconds);
+    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+  };
 
   const getAuthenticatedUrl = useCallback((url: string) => {
     if (!url) return '';
@@ -256,6 +333,33 @@ export function RecordingArchive({
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
   };
 
+  const formatFriendlyRecordingTitle = (title: string) => {
+    // Check if title has unformatted timestamp e.g. "Recording - 2026-10-16_13-16-46-167599" or "Take - 2026-10-16_..."
+    const match = title.match(/(?:Recording|Take)\s*-\s*(\d{4})-(\d{2})-(\d{2})_(\d{2})-(\d{2})-(\d{2})/);
+    if (match) {
+      const [, year, month, day, hours, minutes, seconds] = match;
+      const h = parseInt(hours, 10);
+      const ampm = h >= 12 ? 'pm' : 'am';
+      const h12 = h % 12 || 12;
+      const pad = (n: number | string) => n.toString().padStart(2, '0');
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthName = monthNames[parseInt(month, 10) - 1] || month;
+      return `${pad(h12)}:${pad(minutes)}:${pad(seconds)} ${ampm} ${parseInt(day, 10)} ${monthName} ${year}`;
+    }
+    return title;
+  };
+
+  const formatFriendlyDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const h = d.getHours();
+    const ampm = h >= 12 ? 'pm' : 'am';
+    const h12 = h % 12 || 12;
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return `${pad(h12)}:${pad(d.getMinutes())}:${pad(d.getSeconds())} ${ampm} ${d.getDate()} ${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+  };
+
   return (
     <div className="space-y-6">
       {/* Player Section */}
@@ -267,15 +371,25 @@ export function RecordingArchive({
           <div className="flex items-center gap-2">
             <Film className="w-4 h-4 text-purple-400" />
             <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-              {selectedRecording ? selectedRecording.title : 'Recording Playback & Replay'}
+              {selectedRecording ? formatFriendlyRecordingTitle(selectedRecording.title) : 'Recording Playback & Replay'}
             </span>
           </div>
 
           <div className="flex items-center gap-3">
             {selectedRecording && (
-              <span className="text-[11px] font-mono text-slate-400">
-                {formatFileSize(selectedRecording.file_size_bytes)}
-              </span>
+              <>
+                <button
+                  onClick={handleOpenAddChapter}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors shadow-sm"
+                  title="Add chapter marker at current time"
+                >
+                  <Flag className="w-3.5 h-3.5 text-purple-400" />
+                  <span>+ Add Chapter</span>
+                </button>
+                <span className="text-[11px] font-mono text-slate-400">
+                  {formatFileSize(selectedRecording.file_size_bytes)}
+                </span>
+              </>
             )}
             <button
               onClick={loadRecordings}
@@ -342,20 +456,62 @@ export function RecordingArchive({
 
               {/* Floating Bottom Scrubber & Controls */}
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col gap-2 z-10">
-                {/* Timeline Scrubber */}
+                {/* Timeline Scrubber with Interactive Chapter Marker Pins */}
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono text-slate-300 w-10 text-right">
                     {formatTime(currentTime)}
                   </span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={duration || 100}
-                    step={0.5}
-                    value={currentTime}
-                    onChange={handleSeekChange}
-                    className="flex-1 accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-slate-700/80"
-                  />
+                  <div className="flex-1 relative flex items-center h-6 group/timeline">
+                    <input
+                      type="range"
+                      min={0}
+                      max={duration || 100}
+                      step={0.5}
+                      value={currentTime}
+                      onChange={handleSeekChange}
+                      className="w-full accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-slate-700/80 z-10"
+                    />
+                    {/* Chapter Marker Pins on Timeline Track */}
+                    {duration > 0 &&
+                      markers.map((m) => {
+                        if (m.timestamp_seconds === null || m.timestamp_seconds === undefined) return null;
+                        const pct = Math.min(100, Math.max(0, (m.timestamp_seconds / duration) * 100));
+                        return (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleJumpToMarker(m.timestamp_seconds);
+                            }}
+                            style={{ left: `${pct}%` }}
+                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 z-20 group/pin flex items-center justify-center focus:outline-none"
+                            title={`${formatTime(m.timestamp_seconds)} - ${m.title}`}
+                          >
+                            <span
+                              className={`w-2.5 h-2.5 rounded-full border border-black shadow-md transition-transform group-hover/pin:scale-150 ${
+                                m.color === 'emerald'
+                                  ? 'bg-emerald-400'
+                                  : m.color === 'amber'
+                                  ? 'bg-amber-400'
+                                  : m.color === 'rose'
+                                  ? 'bg-rose-400'
+                                  : m.color === 'blue'
+                                  ? 'bg-blue-400'
+                                  : 'bg-purple-400'
+                              }`}
+                            />
+                            {/* Tooltip on Hover */}
+                            <div className="absolute bottom-full mb-1.5 hidden group-hover/pin:flex flex-col items-center pointer-events-none whitespace-nowrap z-30">
+                              <div className="bg-[#0b0e17] border border-[#232f48] text-white text-[10px] px-2 py-0.5 rounded shadow-lg flex items-center gap-1.5">
+                                <span className="font-mono text-purple-400 font-bold">{formatTime(m.timestamp_seconds)}</span>
+                                <span className="font-semibold">{m.title}</span>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                  </div>
                   <span className="text-[10px] font-mono text-slate-400 w-10">
                     {formatTime(duration)}
                   </span>
@@ -385,6 +541,16 @@ export function RecordingArchive({
                       title="Skip forward 10s"
                     >
                       <RotateCw className="w-4 h-4" />
+                    </button>
+
+                    {/* Quick Add Chapter */}
+                    <button
+                      onClick={handleOpenAddChapter}
+                      className="p-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 transition-colors flex items-center gap-1 text-[11px] font-semibold"
+                      title="Add chapter at current time"
+                    >
+                      <Flag className="w-3.5 h-3.5 text-purple-400" />
+                      <span className="hidden sm:inline">+ Chapter</span>
                     </button>
 
                     <div className="flex items-center gap-1.5 ml-2">
@@ -456,6 +622,136 @@ export function RecordingArchive({
           )}
         </div>
       </div>
+
+      {/* Chapters & Moment Marks Panel (for current recording) */}
+      {selectedRecording && (
+        <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-xl">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Bookmark className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm font-bold text-slate-100">
+                Chapters & Timeline Marks ({markers.length})
+              </h3>
+            </div>
+            <button
+              onClick={handleOpenAddChapter}
+              className="px-2.5 py-1 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center gap-1 shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Chapter</span>
+            </button>
+          </div>
+
+          {markers.length === 0 ? (
+            <div className="py-6 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
+              <Flag className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
+              <p className="text-xs text-slate-400 font-medium">No chapters or scene marks saved for this take</p>
+              <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
+                Scrub to any moment in the video and click &quot;+ Add Chapter&quot; to bookmark scenes, cues, or rehearsal segments.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
+              {markers.map((m, idx) => {
+                const nextMarker = markers[idx + 1];
+                const isActive =
+                  m.timestamp_seconds !== null &&
+                  m.timestamp_seconds !== undefined &&
+                  currentTime >= m.timestamp_seconds &&
+                  (nextMarker?.timestamp_seconds ? currentTime < nextMarker.timestamp_seconds : true);
+
+                return (
+                  <div
+                    key={m.id}
+                    className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 ${
+                      isActive
+                        ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
+                        : 'border-l-4 border-l-transparent hover:bg-[#131826]'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => handleJumpToMarker(m.timestamp_seconds)}
+                      className="flex items-center gap-3 min-w-0 text-left flex-1"
+                    >
+                      {/* Chapter Index / Status Indicator */}
+                      <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
+                        {isActive ? (
+                          <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
+                        ) : (
+                          <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
+                            {String(idx + 1).padStart(2, '0')}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Color Tag Indicator */}
+                      <span
+                        className={`w-2 h-2 rounded-full shrink-0 ${
+                          m.color === 'emerald'
+                            ? 'bg-emerald-400'
+                            : m.color === 'amber'
+                            ? 'bg-amber-400'
+                            : m.color === 'rose'
+                            ? 'bg-rose-400'
+                            : m.color === 'blue'
+                            ? 'bg-blue-400'
+                            : 'bg-purple-400'
+                        }`}
+                      />
+
+                      {/* Title & Description */}
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 transition-colors truncate">
+                            {m.title}
+                          </span>
+                          {isActive && (
+                            <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
+                              NOW PLAYING
+                            </span>
+                          )}
+                        </div>
+                        {m.description && (
+                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{m.description}</p>
+                        )}
+                      </div>
+                    </button>
+
+                    {/* Timecode Badge & Action Buttons */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleJumpToMarker(m.timestamp_seconds)}
+                        className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
+                          isActive
+                            ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                            : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
+                        }`}
+                        title="Jump to this time"
+                      >
+                        <Play className="w-2.5 h-2.5 fill-current" />
+                        <span>{formatTime(m.timestamp_seconds || 0)}</span>
+                      </button>
+
+                      {(isSMOrAdmin || isAdmin) && (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteMarker(m.id)}
+                          className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
+                          title="Delete chapter"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Recordings Archive List */}
       <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">
@@ -544,7 +840,7 @@ export function RecordingArchive({
                       ) : (
                         <div className="flex items-center gap-2 flex-1 min-w-0">
                           <h4 className="text-xs font-bold text-slate-200 truncate">
-                            {rec.title}
+                            {formatFriendlyRecordingTitle(rec.title)}
                           </h4>
                           {isSMOrAdmin && (
                             <button
@@ -567,7 +863,7 @@ export function RecordingArchive({
                     <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mb-4">
                       <div className="flex items-center gap-1">
                         <Calendar className="w-3 h-3 text-slate-500" />
-                        <span>{new Date(rec.created_at).toLocaleString()}</span>
+                        <span>{formatFriendlyDate(rec.created_at)}</span>
                       </div>
                       <div className="flex items-center gap-1">
                         <HardDrive className="w-3 h-3 text-slate-500" />
@@ -644,6 +940,119 @@ export function RecordingArchive({
           </div>
         )}
       </div>
+
+      {/* Add Chapter / Mark Modal */}
+      {showAddChapterModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="w-full max-w-sm bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-2xl">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Flag className="w-4 h-4 text-purple-400" />
+                <h3 className="text-sm font-bold text-slate-100">Add Chapter Mark</h3>
+              </div>
+              <button
+                onClick={() => setShowAddChapterModal(false)}
+                className="text-slate-400 hover:text-slate-200 p-1"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateChapter} className="space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-slate-300">
+                    Chapter / Cue Title
+                  </label>
+                  <span className="text-[11px] font-mono text-purple-400 font-bold">
+                    @ {formatTime(chapterTime)}
+                  </span>
+                </div>
+                <input
+                  type="text"
+                  value={chapterTitle}
+                  onChange={(e) => setChapterTitle(e.target.value)}
+                  placeholder="e.g. Act 1 Scene 2, Solo, Intermission"
+                  className="w-full px-3 py-2 text-xs bg-[#0b0e17] border border-[#1e2638] focus:border-purple-500 rounded-xl text-slate-100 outline-none"
+                  autoFocus
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">
+                  Optional Notes
+                </label>
+                <input
+                  type="text"
+                  value={chapterDescription}
+                  onChange={(e) => setChapterDescription(e.target.value)}
+                  placeholder="Additional cues or notes..."
+                  className="w-full px-3 py-1.5 text-xs bg-[#0b0e17] border border-[#1e2638] focus:border-purple-500 rounded-xl text-slate-100 outline-none"
+                />
+              </div>
+
+              {/* Quick Presets */}
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1.5">Quick Presets</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {['Scene 1', 'Scene 2', 'Solo Performance', 'Intermission', 'Key Cue', 'Finale'].map((preset) => (
+                    <button
+                      type="button"
+                      key={preset}
+                      onClick={() => setChapterTitle(preset)}
+                      className="text-[10px] px-2 py-0.5 rounded-md bg-[#161c2c] hover:bg-[#202940] text-slate-300 border border-[#232d44] transition-colors"
+                    >
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color selector */}
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1.5">Pin Color</label>
+                <div className="flex items-center gap-2">
+                  {[
+                    { id: 'purple', bg: 'bg-purple-500' },
+                    { id: 'blue', bg: 'bg-blue-500' },
+                    { id: 'emerald', bg: 'bg-emerald-500' },
+                    { id: 'amber', bg: 'bg-amber-500' },
+                    { id: 'rose', bg: 'bg-rose-500' },
+                  ].map((c) => (
+                    <button
+                      type="button"
+                      key={c.id}
+                      onClick={() => setChapterColor(c.id)}
+                      className={`w-6 h-6 rounded-full ${c.bg} transition-transform ${
+                        chapterColor === c.id ? 'ring-2 ring-white scale-110' : 'opacity-60 hover:opacity-100'
+                      }`}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1e2638]">
+                <button
+                  type="button"
+                  onClick={() => setShowAddChapterModal(false)}
+                  className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingChapter || !chapterTitle.trim()}
+                  className="px-4 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors shadow-lg shadow-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{savingChapter ? 'Saving...' : 'Pin Chapter'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
