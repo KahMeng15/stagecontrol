@@ -176,7 +176,9 @@ export function LivePlayer({
         };
 
         ws.onerror = () => {
-          ws?.close();
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.close();
+          }
         };
       } catch {}
     };
@@ -187,7 +189,15 @@ export function LivePlayer({
       isDisposed = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);
       if (captionTimeoutRef.current) clearTimeout(captionTimeoutRef.current);
-      if (ws) ws.close();
+      if (ws) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => {
+            try { ws?.close(); } catch {}
+          };
+        }
+      }
     };
   }, [eventId]);
 

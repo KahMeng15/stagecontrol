@@ -112,6 +112,28 @@ class TranscriptionService:
             except asyncio.CancelledError:
                 pass
 
+    @staticmethod
+    def _is_hallucinated_repetition(text: str) -> bool:
+        """Filters out degenerate hallucination loops like 'Ah-ha-ha-ha...' or repeated token loops."""
+        import re, zlib
+        if not text or len(text) < 2:
+            return True
+        raw_bytes = text.encode("utf-8")
+        compressed = zlib.compress(raw_bytes)
+        ratio = len(raw_bytes) / max(1, len(compressed))
+        if ratio > 2.2 and len(text) > 15:
+            return True
+        # Detect token/syllable repetition loops (e.g. ha-ha-ha-ha, ah-ah-ah-ah, bla bla bla bla)
+        if re.search(r'([A-Za-z]{1,6}[- ]?)\1{3,}', text, re.IGNORECASE):
+            return True
+        # Detect repeated phrase loops
+        words = text.strip().split()
+        if len(words) >= 5:
+            unique_words = set(w.lower().strip(".,!?-") for w in words)
+            if len(unique_words) <= 2:
+                return True
+        return False
+
     def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> list[dict]:
         """Synchronously runs whisper inference on a float32 16kHz mono audio chunk."""
         model = self._get_model()
@@ -128,10 +150,15 @@ class TranscriptionService:
                 temperature=0.0,
                 condition_on_previous_text=False,  # Prevents repeating previous text or looping
                 without_timestamps=True,  # Significant speedup since timestamps are managed by the audio chunker
+                vad_filter=True,  # Silero VAD filters out laughter, breathing, and mic hum before decoding
+                vad_parameters=dict(min_silence_duration_ms=350),
+                no_speech_threshold=0.6,
+                compression_ratio_threshold=2.4,
+                repetition_penalty=1.2,  # Penalizes generating identical tokens repeatedly
             )
             for seg in segments:
                 text = seg.text.strip()
-                if text and len(text) > 1:
+                if text and len(text) > 1 and not self._is_hallucinated_repetition(text):
                     results.append({
                         "text": text,
                         "start": seg.start,

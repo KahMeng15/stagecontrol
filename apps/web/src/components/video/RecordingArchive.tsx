@@ -218,7 +218,8 @@ export function RecordingArchive({
         videoRef.current
           .play()
           .then(() => setIsPlaying(true))
-          .catch((err) => {
+          .catch((err: unknown) => {
+            if (err instanceof Error && err.name === 'AbortError') return;
             console.error("Playback start error:", err);
             setIsPlaying(false);
           });
