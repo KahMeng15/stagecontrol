@@ -117,6 +117,7 @@ export interface SubtitleItem {
   start_seconds?: number | null;
   end_seconds?: number | null;
   confidence?: number | null;
+  is_music?: boolean | null;
   created_at: string;
 }
 

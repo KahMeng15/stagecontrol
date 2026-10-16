@@ -235,3 +235,46 @@ def test_random_line_jump_matching():
     assert conf >= 0.90
 
 
+def test_music_recognition_and_anti_jump():
+    from app.services.script_parser import is_music_text, is_music_or_performance_block
+
+    # 1. Text-based music detection
+    assert is_music_text("♪ La la la love you ♪") is True
+    assert is_music_text("[Music] Instrumental interlude") is True
+    assert is_music_text("[Singing] Chorus repeats") is True
+    assert is_music_text("Regular dialogue spoken on stage") is False
+
+    blocks = [
+        {"id": "b1", "order_index": 0, "speaker": "Narrator", "dialogue": "Welcome everyone to the annual musical.", "cue": ""},
+        {"id": "b2", "order_index": 1, "speaker": "Singer", "dialogue": "[Song begins: Journey to the West]", "cue": "AUDIO: TRACK 1"},
+        {"id": "b3", "order_index": 2, "speaker": "Actor", "dialogue": "We must fulfill seven conditions to cross the sea.", "cue": ""},
+        {"id": "b4", "order_index": 10, "speaker": "Villain", "dialogue": "Talking monkeys are across the mountain river.", "cue": ""},
+    ]
+
+    # Block b2 is a music/performance block
+    assert is_music_or_performance_block(blocks[1]) is True
+    assert is_music_or_performance_block(blocks[0]) is False
+
+    # 2. When singing/music is playing, random words that sound like distant dialogue MUST NOT cause jumps
+    singing_match, _ = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="♪ talking monkeys across the river ♪",
+        current_block_index=1,
+        time_since_last_match=5.0,  # Even well after cooldown
+        is_music=True
+    )
+    # Must NOT jump to line 10!
+    assert singing_match is None or singing_match["id"] == "b2"
+
+    # 3. If currently at line 0, and music starts, advance to the immediate next song block (b2)
+    song_advance, _ = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="♪ [Music / Singing Performance] ♪",
+        current_block_index=0,
+        is_music=True
+    )
+    assert song_advance is not None
+    assert song_advance["id"] == "b2"
+
+
+

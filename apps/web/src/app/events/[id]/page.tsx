@@ -310,7 +310,7 @@ function EventContent() {
                           : 'text-slate-400 hover:text-slate-200'
                       }`}
                     >
-                      {st === 'live' ? '🔴 Live' : st}
+                      {st === 'live' ? 'Live' : st}
                     </button>
                   ))}
                 </div>

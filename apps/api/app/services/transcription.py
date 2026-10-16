@@ -16,6 +16,56 @@ from app.models.subtitle import Subtitle
 
 logger = logging.getLogger("stagecontrol.transcription")
 
+
+def is_music_text(text: str) -> bool:
+    """Detects whether text contains musical notation or singing/performance tags."""
+    if not text:
+        return False
+    if any(ch in text for ch in ["♪", "♫", "♩", "♬", "🎶", "♭", "♯"]):
+        return True
+    lower = text.lower().strip()
+    music_keywords = [
+        "[music]", "(music)", "{music}",
+        "[singing]", "(singing)", "{singing}",
+        "[song]", "(song)", "{song}",
+        "[instrumental]", "(instrumental)", "{instrumental}",
+        "[performance]", "(performance)", "{performance}",
+        "[applause]", "(applause)", "{applause}",
+        "[cheering]", "(cheering)", "{cheering}"
+    ]
+    return any(kw in lower for kw in music_keywords)
+
+
+def detect_music_acoustics(audio: np.ndarray, sample_rate: int = 16000) -> bool:
+    """
+    Evaluates acoustic spectral flatness to detect sustained harmonic music,
+    singing, or backing track audio versus bursty speech.
+    Harmonic music/singing has very low spectral flatness (< 0.025) across windows.
+    """
+    if len(audio) < sample_rate * 0.4:
+        return False
+
+    frame_len = int(sample_rate * 0.4)
+    hop_len = int(sample_rate * 0.2)
+    flatness_scores = []
+
+    for start in range(0, len(audio) - frame_len + 1, hop_len):
+        frame = audio[start:start + frame_len]
+        windowed = frame * np.hanning(len(frame))
+        spectrum = np.abs(np.fft.rfft(windowed)) ** 2
+        spectrum = np.maximum(spectrum, 1e-12)
+        geo_mean = np.exp(np.mean(np.log(spectrum)))
+        ari_mean = np.mean(spectrum)
+        if ari_mean > 1e-6:
+            flatness_scores.append(geo_mean / ari_mean)
+
+    if not flatness_scores:
+        return False
+
+    median_flatness = float(np.median(flatness_scores))
+    return median_flatness < 0.025
+
+
 class TranscriptionService:
     def __init__(self):
         self.model = None
@@ -135,12 +185,14 @@ class TranscriptionService:
         return False
 
     def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> list[dict]:
-        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk."""
+        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk with music & singing detection."""
         model = self._get_model()
         results = []
+        is_acoustic_music = detect_music_acoustics(audio_data)
+
         try:
-            # Clean prompt guiding multilingual English and Bahasa Melayu recognition without hallucinating fake cues
-            initial_prompt = "Stage rehearsal, cues, and dialogue in English and Bahasa Melayu."
+            # Guide multilingual speech & cues with explicit musical performance awareness
+            initial_prompt = "Stage rehearsal, dialogue, cues, and musical performances [Music] [Singing] ♪ in English and Bahasa Melayu."
             segments, info = model.transcribe(
                 audio_data,
                 task="transcribe",
@@ -159,12 +211,32 @@ class TranscriptionService:
             for seg in segments:
                 text = seg.text.strip()
                 if text and len(text) > 1 and not self._is_hallucinated_repetition(text):
+                    is_seg_music = is_music_text(text) or is_acoustic_music
+                    formatted_text = text
+                    if is_seg_music and not any(ch in formatted_text for ch in ["♪", "♫"]):
+                        if not formatted_text.startswith("["):
+                            formatted_text = f"♪ {formatted_text} ♪"
+
                     results.append({
-                        "text": text,
+                        "text": formatted_text,
+                        "raw_text": text,
                         "start": seg.start,
                         "end": seg.end,
-                        "language": info.language or "en"
+                        "language": info.language or "en",
+                        "is_music": is_seg_music,
                     })
+
+            # If Whisper produced no segments (e.g. instrumental music filtered by VAD)
+            # but acoustic analysis detects sustained harmonic music, emit a music event
+            if not results and is_acoustic_music:
+                results.append({
+                    "text": "♪ [Live Music / Performance] ♪",
+                    "raw_text": "[Music]",
+                    "start": 0.0,
+                    "end": float(len(audio_data) / 16000),
+                    "language": "en",
+                    "is_music": True
+                })
         except Exception as e:
             logger.error(f"Error during whisper inference: {e}")
         return results
@@ -302,6 +374,8 @@ class TranscriptionService:
 
                     if results:
                         combined_text = " ".join(r["text"] for r in results).strip()
+                        is_chunk_music = any(r.get("is_music", False) for r in results) or is_music_text(combined_text)
+
                         if combined_text:
                             # Save to Database
                             db: Session = SessionLocal()
@@ -387,14 +461,16 @@ class TranscriptionService:
                                 "language": results[0].get("language", "en"),
                                 "start_seconds": start_sec,
                                 "end_seconds": end_sec,
+                                "is_music": is_chunk_music,
                                 "created_at": now.isoformat()
                             }
                             await self.broadcast_subtitle(event_id, payload)
-                            logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s, {trigger_reason}): {combined_text}")
+                            music_indicator = " [MUSIC/SINGING]" if is_chunk_music else ""
+                            logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s, {trigger_reason}{music_indicator}): {combined_text}")
 
                             # Auto-sync live speech with event's active script
                             try:
-                                await self._match_and_sync_script(event_id, combined_text)
+                                await self._match_and_sync_script(event_id, combined_text, is_music=is_chunk_music)
                             except Exception as sync_err:
                                 logger.warning(f"Script sync check failed: {sync_err}")
 
@@ -415,9 +491,10 @@ class TranscriptionService:
             self.active_tasks.pop(event_id, None)
             logger.info(f"Transcription worker cleanly exited for event {event_id}")
 
-    async def _match_and_sync_script(self, event_id: str, spoken_text: str):
+    async def _match_and_sync_script(self, event_id: str, spoken_text: str, is_music: bool = False):
         """
-        Fuzzy matches speech against event's active script blocks with ~75-80% wildcard tolerance.
+        Fuzzy matches speech against event's active script blocks with ~75-80% wildcard tolerance,
+        with music & singing protection against mistranscription jumps.
         If matched, updates current active block and broadcasts 'script_sync' to all connected crew.
         """
         try:
@@ -461,7 +538,8 @@ class TranscriptionService:
                     time_since_last_match=time_since,
                     threshold=0.62,
                     local_window_size=5,
-                    global_search_delay_seconds=3.0
+                    global_search_delay_seconds=3.0,
+                    is_music=is_music
                 )
 
                 if matched_block:
@@ -477,7 +555,8 @@ class TranscriptionService:
                         "cue": matched_block.cue,
                         "dialogue": matched_block.dialogue,
                         "spoken_text": spoken_text,
-                        "confidence": round(confidence, 2)
+                        "confidence": round(confidence, 2),
+                        "is_music": is_music,
                     }
                     await self.broadcast_subtitle(event_id, sync_payload)
                     logger.info(f"[{event_id[:8]}] Script Auto-Synced to line {matched_block.order_index} ({matched_block.speaker}): {matched_block.dialogue[:50]}... (conf: {confidence:.2f})")

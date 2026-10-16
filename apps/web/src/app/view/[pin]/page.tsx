@@ -97,12 +97,15 @@ function ViewPinContent() {
                   <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
                     PIN Verified: {pin}
                   </span>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex items-center gap-1.5 ${
                     eventInfo.status === 'live'
                       ? 'bg-red-500/20 text-red-400 border border-red-500/30'
                       : 'bg-slate-800 text-slate-400'
                   }`}>
-                    {eventInfo.status === 'live' ? '🔴 ON AIR' : eventInfo.status.toUpperCase()}
+                    {eventInfo.status === 'live' && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                    )}
+                    <span>{eventInfo.status === 'live' ? 'ON AIR' : eventInfo.status.toUpperCase()}</span>
                   </span>
                 </div>
                 <h2 className="text-base font-bold text-slate-100">{eventInfo.name}</h2>

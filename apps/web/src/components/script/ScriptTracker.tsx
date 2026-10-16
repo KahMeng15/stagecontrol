@@ -34,9 +34,14 @@ interface ScriptTrackerProps {
 }
 
 // Client-side fuzzy text normalization
-function normalizeText(text: string): string {
+function normalizeText(text: string, stripActions: boolean = false): string {
   if (!text) return '';
-  return text
+  let cleaned = text;
+  if (stripActions) {
+    // Strip stage directions and actor actions in brackets: [Groans], (pause), {applause}
+    cleaned = cleaned.replace(/\[.*?\]|\(.*?\)|{.*?}/g, ' ');
+  }
+  return cleaned
     .toLowerCase()
     .replace(/['’`]/g, '')
     .replace(/[^\w\s]/g, ' ')
@@ -58,8 +63,11 @@ function wordRatio(a: string, b: string): number {
 
 // Client-side similarity calculation with wildcard tolerance
 function computeSimilarity(spoken: string, dialogue: string): number {
-  const normSpk = normalizeText(spoken);
-  const normDiag = normalizeText(dialogue);
+  const normSpk = normalizeText(spoken, false);
+  let normDiag = normalizeText(dialogue, true);
+  if (!normDiag) {
+    normDiag = normalizeText(dialogue, false);
+  }
   if (!normSpk || !normDiag) return 0;
 
   const spkWords = normSpk.split(' ').filter((w) => w.length > 1);
@@ -167,6 +175,69 @@ function getCueType(cue?: string | null): 'lighting' | 'audio' | 'stage' | 'none
   return 'stage';
 }
 
+interface DialogueContentProps {
+  text?: string | null;
+  isActive: boolean;
+  teleprompterMode: boolean;
+}
+
+function DialogueContent({ text, isActive, teleprompterMode }: DialogueContentProps) {
+  const segments = useMemo(() => {
+    if (!text) return [];
+    // Split by bracketed stage directions or actions: [ ... ], ( ... ), { ... }
+    const parts = text.split(/(\[[^\]]+\]|\([^\)]+\)|\{[^\}]+\})/g);
+    return parts
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+      .map((p) => {
+        const isAction =
+          (p.startsWith('[') && p.endsWith(']')) ||
+          (p.startsWith('(') && p.endsWith(')')) ||
+          (p.startsWith('{') && p.endsWith('}'));
+        return { text: p, isAction };
+      });
+  }, [text]);
+
+  if (segments.length === 0) {
+    return <p className="text-xs text-slate-500 italic">[Stage direction / Musical interlude]</p>;
+  }
+
+  return (
+    <div className="space-y-1">
+      {segments.map((seg, idx) => {
+        if (seg.isAction) {
+          return (
+            <div key={idx} className="my-0.5">
+              <span
+                className={`font-mono inline-flex items-center px-2 py-0.5 rounded border text-[11px] tracking-wide select-none max-w-full break-words whitespace-normal ${
+                  isActive
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold shadow-sm shadow-amber-500/10'
+                    : 'bg-slate-800/80 border-slate-700/80 text-amber-400/90'
+                } ${teleprompterMode ? 'text-sm sm:text-base px-3 py-1' : ''}`}
+              >
+                <span className="font-mono break-words whitespace-normal">{seg.text}</span>
+              </span>
+            </div>
+          );
+        }
+
+        return (
+          <p
+            key={idx}
+            className={`leading-normal ${
+              teleprompterMode
+                ? 'text-xl sm:text-2xl font-semibold'
+                : 'text-sm'
+            } ${isActive ? 'text-slate-100 font-medium' : 'text-slate-300'}`}
+          >
+            {seg.text}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function ScriptTracker({
   eventId,
   isSMOrAdmin,
@@ -186,6 +257,8 @@ export default function ScriptTracker({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSectionId, setSelectedSectionId] = useState<string>('all');
   const [teleprompterMode, setTeleprompterMode] = useState(false);
+  const [isMusicActive, setIsMusicActive] = useState(false);
+  const musicTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Import Modal
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -291,20 +364,52 @@ export default function ScriptTracker({
               setScript(null);
               setActiveBlockId(null);
             } else if (data.type === 'subtitle') {
-              // Real-time client-side fuzzy match with anti-jump cooldown:
-              // 1. Search local window (±5 lines).
-              // 2. If no local line matches, only search globally across all lines if >= 3.0s has passed since last match.
+              const spoken = data.text || '';
+              const isMusic = Boolean(data.is_music) ||
+                /[\u266a\u266b\u2669\u266c]/.test(spoken) ||
+                /\[(music|singing|song|instrumental|performance)\]/i.test(spoken) ||
+                /\((music|singing|song|instrumental|performance)\)/i.test(spoken);
+
+              if (isMusic) {
+                setIsMusicActive(true);
+                if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
+                musicTimerRef.current = setTimeout(() => {
+                  setIsMusicActive(false);
+                }, 4500);
+              }
+
+              // Real-time client-side fuzzy match with anti-jump cooldown & music protection:
               const currentBlocks = allBlocksRef.current;
               const isSyncOn = speechSyncEnabledRef.current;
-              const spoken = data.text;
 
-              if (isSyncOn && currentBlocks.length > 0 && spoken && spoken.split(' ').length >= 2) {
+              if (isSyncOn && currentBlocks.length > 0 && spoken) {
+                const currBlockId = activeBlockIdRef.current;
+                const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
+
+                // Music Guard: While singing or music is playing, do NOT jump around dialogue lines!
+                if (isMusic) {
+                  if (currIdx >= 0) {
+                    for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + 2); i++) {
+                      const blk = currentBlocks[i];
+                      const combined = `${blk.cue || ''} ${blk.dialogue || ''}`.toLowerCase();
+                      if (combined.includes('song') || combined.includes('music') || combined.includes('singing') || combined.includes('performance') || combined.includes('audio')) {
+                        if (blk.id !== currBlockId) {
+                          setActiveBlockId(blk.id);
+                          lastMatchTimeRef.current = Date.now();
+                        }
+                        break;
+                      }
+                    }
+                  }
+                  // Hold position during music; never execute global jumps!
+                  return;
+                }
+
+                if (spoken.split(' ').length < 2) return;
+
                 const thresholdFraction = wildcardThresholdRef.current / 100.0;
                 const now = Date.now();
                 const timeSinceLastMatch = (now - lastMatchTimeRef.current) / 1000.0;
-
-                const currBlockId = activeBlockIdRef.current;
-                const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
 
                 // Step 1: Check Local Window (±5 lines around current position)
                 let bestLocalMatch: ScriptBlock | null = null;
@@ -454,7 +559,7 @@ export default function ScriptTracker({
     }
   };
 
-  // Find active block & upcoming cues
+  // Find active block, active cues & upcoming cues
   const activeIndex = useMemo(() => {
     if (!activeBlockId) return -1;
     return allBlocks.findIndex((b) => b.id === activeBlockId);
@@ -462,10 +567,40 @@ export default function ScriptTracker({
 
   const activeBlock = activeIndex >= 0 ? allBlocks[activeIndex] : null;
 
+  // Active cues currently live on stage or in effect
+  const activeCues = useMemo(() => {
+    if (activeIndex < 0 || !allBlocks.length) return [];
+    const current = allBlocks[activeIndex];
+
+    // 1. Direct cue on the current active line
+    if (current?.cue && current.cue.trim()) {
+      return [{
+        block: current,
+        type: getCueType(current.cue),
+        isCurrentLine: true,
+      }];
+    }
+
+    // 2. Or most recent cue still active from preceding lines
+    for (let i = activeIndex - 1; i >= Math.max(0, activeIndex - 15); i--) {
+      const blk = allBlocks[i];
+      if (blk?.cue && blk.cue.trim()) {
+        return [{
+          block: blk,
+          type: getCueType(blk.cue),
+          isCurrentLine: false,
+        }];
+      }
+    }
+
+    return [];
+  }, [allBlocks, activeIndex]);
+
+  // Upcoming cues strictly approaching ahead of current line
   const upcomingCues = useMemo(() => {
     if (activeIndex < 0) return [];
     const cues: Array<{ block: ScriptBlock; distance: number; type: 'lighting' | 'audio' | 'stage' | 'none' }> = [];
-    for (let i = activeIndex; i < Math.min(allBlocks.length, activeIndex + 8); i++) {
+    for (let i = activeIndex + 1; i < Math.min(allBlocks.length, activeIndex + 8); i++) {
       const blk = allBlocks[i];
       if (blk.cue && blk.cue.trim()) {
         cues.push({
@@ -585,7 +720,7 @@ export default function ScriptTracker({
               <span>Speech-to-Script Wildcard Sync (~{wildcardThreshold}% tolerance)</span>
               {lastConfidence && (
                 <span className="text-emerald-400 font-mono font-medium">
-                  • 🎯 {Math.round(lastConfidence * 100)}% match
+                  • {Math.round(lastConfidence * 100)}% match
                 </span>
               )}
             </p>
@@ -721,16 +856,74 @@ export default function ScriptTracker({
         </div>
       )}
 
+      {/* Live Music / Performance Active Indicator Banner */}
+      {isMusicActive && (
+        <div className="px-4 py-2 bg-gradient-to-r from-blue-950/60 via-indigo-950/40 to-[#0c0e16] border-b border-indigo-500/30 flex items-center justify-between gap-3 text-xs animate-in fade-in duration-150">
+          <div className="flex items-center gap-2 text-indigo-300 font-semibold">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500"></span>
+            </span>
+            <Music className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="tracking-wide">Singing / Music Performance Active</span>
+          </div>
+          <span className="text-[11px] font-mono text-indigo-300/80 bg-indigo-950/80 border border-indigo-500/30 px-2 py-0.5 rounded select-none">
+            Dialogue sync anchored
+          </span>
+        </div>
+      )}
+
+      {/* Active Cues Alert Banner for Technical Crew */}
+      {activeCues.length > 0 && (
+        <div className="px-4 py-2 bg-gradient-to-r from-emerald-950/40 via-teal-950/30 to-[#0c0e16] border-b border-emerald-500/25 flex items-center gap-3 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1.5 text-emerald-300 font-semibold uppercase tracking-wider shrink-0">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            <span className="font-bold">Active Cues:</span>
+          </div>
+
+          <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
+            {activeCues.map((item) => (
+              <div
+                key={item.block.id}
+                onClick={() => handleJumpToBlock(item.block)}
+                className={`cursor-pointer px-3 py-1.5 rounded-lg border text-xs flex items-center gap-2 shrink-0 transition-transform hover:scale-105 shadow-sm ${
+                  item.type === 'lighting'
+                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-amber-500/10'
+                    : item.type === 'audio'
+                    ? 'bg-purple-500/15 border-purple-500/40 text-purple-300 shadow-purple-500/10'
+                    : 'bg-emerald-500/15 border-emerald-500/40 text-emerald-300 shadow-emerald-500/10'
+                }`}
+              >
+                {item.type === 'lighting' ? (
+                  <Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                ) : item.type === 'audio' ? (
+                  <Music className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+                ) : (
+                  <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                )}
+                <span className="font-bold text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-black/40 border border-white/10 shrink-0">
+                  {item.isCurrentLine ? 'LIVE NOW' : `LINE #${item.block.order_index + 1}`}
+                </span>
+                <span className="font-mono font-medium whitespace-nowrap">{item.block.cue}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Upcoming Cues Alert Banner for Technical Crew */}
       {upcomingCues.length > 0 && (
-        <div className="px-4 py-2.5 bg-gradient-to-r from-purple-950/40 via-blue-950/30 to-[#0c0e16] border-b border-purple-500/20 flex items-center gap-3 overflow-x-auto text-xs">
+        <div className="px-4 py-2 bg-gradient-to-r from-purple-950/40 via-blue-950/30 to-[#0c0e16] border-b border-purple-500/20 flex items-center gap-3 overflow-x-auto text-xs">
           <div className="flex items-center gap-1.5 text-purple-300 font-semibold uppercase tracking-wider shrink-0">
             <Radio className="w-3.5 h-3.5 animate-pulse text-purple-400" />
             <span>Upcoming Cues:</span>
           </div>
 
           <div className="flex items-center gap-2 flex-1 overflow-x-auto">
-            {upcomingCues.slice(0, 3).map((item, idx) => (
+            {upcomingCues.slice(0, 3).map((item) => (
               <div
                 key={item.block.id}
                 onClick={() => handleJumpToBlock(item.block)}
@@ -743,27 +936,39 @@ export default function ScriptTracker({
                 }`}
               >
                 {item.type === 'lighting' ? (
-                  <Lightbulb className="w-3 h-3 text-amber-400" />
+                  <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
                 ) : item.type === 'audio' ? (
-                  <Music className="w-3 h-3 text-purple-400" />
+                  <Music className="w-3 h-3 text-purple-400 shrink-0" />
                 ) : (
-                  <FileText className="w-3 h-3 text-emerald-400" />
+                  <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
                 )}
-                <span className="font-semibold">
-                  {item.distance === 0 ? 'NOW' : `In ${item.distance} line${item.distance > 1 ? 's' : ''}`}:
+                <span className="font-semibold shrink-0">
+                  In {item.distance} line{item.distance > 1 ? 's' : ''}:
                 </span>
-                <span className="truncate max-w-[180px] font-mono">{item.block.cue}</span>
+                <span className="font-mono font-medium whitespace-nowrap">{item.block.cue}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Script Lines Content Container */}
+      {/* Table Header Bar for Column Titles (Continuous Stage Cue Layout) */}
+      {script && displayBlocks.length > 0 && (
+        <div className="flex items-center px-3 py-1.5 bg-[#090c12] border-b border-[#1e2638] text-[11px] font-bold text-slate-400 uppercase tracking-wider select-none shrink-0 sticky top-0 z-10">
+          <div className="w-28 sm:w-36 lg:w-44 shrink-0 flex items-center gap-1.5 pr-2">
+            <span className="w-5 text-slate-500">#</span>
+            <span>Speaker</span>
+          </div>
+          <div className="flex-1 min-w-0 pr-4">Dialogue</div>
+          <div className="w-48 sm:w-64 lg:w-80 shrink-0 text-right">Technical Notes</div>
+        </div>
+      )}
+
+      {/* Script Lines Content Container (Continuous List, No Gaps) */}
       <div
         ref={listContainerRef}
-        className={`relative flex-1 overflow-y-auto p-4 space-y-3 ${
-          teleprompterMode ? 'max-h-full px-8 py-6' : 'max-h-[550px]'
+        className={`relative flex-1 overflow-y-auto divide-y divide-[#1e2638]/70 bg-[#0b0e17] ${
+          teleprompterMode ? 'max-h-full' : 'max-h-[550px]'
         }`}
       >
         {loading ? (
@@ -772,7 +977,7 @@ export default function ScriptTracker({
             <span className="text-xs text-slate-400">Loading synchronized script...</span>
           </div>
         ) : !script ? (
-          <div className="py-16 text-center border border-dashed border-[#1e2638] rounded-2xl flex flex-col items-center justify-center p-6">
+          <div className="py-16 text-center border border-dashed border-[#1e2638] rounded-2xl flex flex-col items-center justify-center p-6 m-4">
             <div className="w-12 h-12 rounded-2xl bg-purple-600/10 border border-purple-500/20 flex items-center justify-center text-purple-400 mb-3">
               <FileText className="w-6 h-6" />
             </div>
@@ -808,97 +1013,78 @@ export default function ScriptTracker({
                 key={block.id}
                 ref={isActive ? activeBlockRef : null}
                 onClick={() => handleJumpToBlock(block)}
-                className={`relative rounded-xl border p-3.5 transition-all cursor-pointer ${
+                className={`group relative flex items-start transition-colors cursor-pointer px-3 py-1.5 md:py-2 ${
                   isActive
-                    ? 'bg-emerald-950/25 border-emerald-500/80 shadow-lg shadow-emerald-500/10 scale-[1.01]'
-                    : 'bg-[#0f121b] border-[#1e2638] hover:border-slate-600/50 hover:bg-[#141824]'
+                    ? 'bg-emerald-950/40 border-l-4 border-l-emerald-400 shadow-sm'
+                    : 'border-l-4 border-l-transparent hover:bg-[#131826]/70'
                 }`}
               >
-                {/* Active Indicator & Line Number */}
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="flex items-center gap-2">
-                    {isActive ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 font-bold text-[10px] uppercase tracking-wider animate-pulse">
-                        <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                        ON STAGE
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-mono text-slate-500">
-                        #{block.order_index + 1}
-                      </span>
-                    )}
+                {/* Left Column: Speaker & Line Number */}
+                <div className="w-28 sm:w-36 lg:w-44 shrink-0 pr-2 flex items-start gap-1.5 pt-0.5">
+                  <span className="text-[10px] font-mono text-slate-500 w-5 shrink-0 pt-0.5 select-none">
+                    #{block.order_index + 1}
+                  </span>
 
-                    {/* Speaker Chip */}
-                    {block.speaker && (
-                      <span
-                        className={`px-2.5 py-0.5 rounded-md border text-xs font-semibold capitalize ${getSpeakerColor(
-                          block.speaker
-                        )}`}
-                      >
-                        {block.speaker}
-                      </span>
-                    )}
-                  </div>
+                  {block.speaker ? (
+                    <span
+                      className={`px-1.5 py-0.5 rounded text-xs font-semibold capitalize truncate max-w-[85px] sm:max-w-[110px] lg:max-w-[130px] border ${getSpeakerColor(
+                        block.speaker
+                      )}`}
+                      title={block.speaker}
+                    >
+                      {block.speaker}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-500 italic select-none">—</span>
+                  )}
+                </div>
 
-                  {/* Technical Cue Badges */}
-                  <div className="flex items-center gap-2">
-                    {block.cue && (
+                {/* Middle Column: Dialogue & Monoscript Actions */}
+                <div className="flex-1 min-w-0 pr-4">
+                  <DialogueContent
+                    text={block.dialogue}
+                    isActive={isActive}
+                    teleprompterMode={teleprompterMode}
+                  />
+                </div>
+
+                {/* Right Column: Technical Notes & Cues (Multi-line wrap, no cutoffs) */}
+                <div className="w-48 sm:w-64 lg:w-80 shrink-0 flex flex-col items-end gap-1 pt-0.5">
+                  <div className="flex items-start gap-1.5 w-full justify-end">
+                    {block.cue ? (
                       <span
-                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg border text-xs font-mono font-medium ${
+                        className={`inline-flex items-start gap-1 px-2 py-0.5 rounded border text-[11px] font-mono font-medium max-w-full text-right break-words whitespace-normal leading-relaxed ${
                           cueType === 'lighting'
                             ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
                             : cueType === 'audio'
                             ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
                             : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                         }`}
+                        title={block.cue}
                       >
                         {cueType === 'lighting' ? (
-                          <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
+                          <Lightbulb className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
                         ) : cueType === 'audio' ? (
-                          <Music className="w-3 h-3 text-purple-400 shrink-0" />
+                          <Music className="w-3 h-3 text-purple-400 shrink-0 mt-0.5" />
                         ) : (
-                          <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                          <FileText className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
                         )}
-                        <span>{block.cue}</span>
+                        <span className="break-words text-right whitespace-normal">{block.cue}</span>
                       </span>
-                    )}
-
-                    {isSMOrAdmin && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleJumpToBlock(block);
-                        }}
-                        className="opacity-0 group-hover:opacity-100 hover:opacity-100 px-2 py-0.5 rounded bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/30 text-[10px] text-blue-300 transition-opacity"
-                        title="Jump here & broadcast to all crew"
-                      >
-                        Jump
-                      </button>
-                    )}
+                    ) : !block.notes ? (
+                      <span className="text-xs text-slate-700 select-none">—</span>
+                    ) : null}
                   </div>
+
+                  {block.notes && (
+                    <span
+                      className="text-[11px] text-slate-400 font-mono text-right max-w-full break-words whitespace-normal leading-relaxed block"
+                      title={block.notes}
+                    >
+                      {block.notes}
+                    </span>
+                  )}
                 </div>
-
-                {/* Spoken Dialogue Text */}
-                {block.dialogue ? (
-                  <p
-                    className={`leading-relaxed ${
-                      teleprompterMode
-                        ? 'text-xl sm:text-2xl font-semibold'
-                        : 'text-sm sm:text-base'
-                    } ${isActive ? 'text-slate-100 font-medium' : 'text-slate-300'}`}
-                  >
-                    {block.dialogue}
-                  </p>
-                ) : (
-                  <p className="text-xs text-slate-500 italic">[Stage direction / Musical interlude]</p>
-                )}
-
-                {/* Notes if any */}
-                {block.notes && (
-                  <p className="text-xs text-slate-400 mt-1.5 border-t border-slate-800/80 pt-1">
-                    📝 {block.notes}
-                  </p>
-                )}
               </div>
             );
           })
@@ -914,7 +1100,7 @@ export default function ScriptTracker({
               Current Speaker: <strong className="text-emerald-400">{activeBlock.speaker || 'Stage'}</strong>
             </span>
             {activeBlock.cue && (
-              <span className="text-xs text-amber-300 bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-mono">
+              <span className="text-xs text-amber-300 bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-mono max-w-xs sm:max-w-md break-words whitespace-normal">
                 CUE: {activeBlock.cue}
               </span>
             )}

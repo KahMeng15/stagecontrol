@@ -248,12 +248,16 @@ def _parse_single_line(line: str, order_index: int) -> Dict[str, Any]:
     }
 
 
-def normalize_script_text(text: str) -> str:
+def normalize_script_text(text: str, strip_actions: bool = False) -> str:
     """Normalizes text for fuzzy matching by collapsing contractions, removing punctuation, and trimming."""
     if not text:
         return ""
+    cleaned = text
+    if strip_actions:
+        # Strip stage directions and actor actions in brackets: [Groans], (pause), {applause}
+        cleaned = re.sub(r'\[.*?\]|\(.*?\)|{.*?}', ' ', cleaned)
     # Remove apostrophes without space so "don't" -> "dont", "it's" -> "its"
-    cleaned = re.sub(r"['’`]", "", text.lower())
+    cleaned = re.sub(r"['’`]", "", cleaned.lower())
     # Replace other punctuation with space
     cleaned = re.sub(r"[^\w\s]", " ", cleaned)
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -263,12 +267,18 @@ def calculate_script_similarity(spoken: str, dialogue: str) -> float:
     """
     Computes fuzzy similarity score between spoken speech and scripted dialogue.
     Handles partial phrases, slight mistranscriptions, and rewordings (~70-80% match).
+    Strips bracketed actions like [Groans] or (pause) from dialogue to match purely spoken words.
     Guards against short-line false positives (e.g. 'No...' matching 'honor').
     """
     from difflib import SequenceMatcher
 
-    norm_spk = normalize_script_text(spoken)
-    norm_diag = normalize_script_text(dialogue)
+    norm_spk = normalize_script_text(spoken, strip_actions=False)
+    # Strip actions from dialogue because actors do not speak bracketed stage directions
+    norm_diag = normalize_script_text(dialogue, strip_actions=True)
+    if not norm_diag:
+        # Fallback if entire block is purely a stage direction
+        norm_diag = normalize_script_text(dialogue, strip_actions=False)
+
     if not norm_spk or not norm_diag:
         return 0.0
 
@@ -336,6 +346,41 @@ class ScriptMatchResult(tuple):
         self.is_local = is_local
 
 
+def is_music_text(text: str) -> bool:
+    """Detects whether text contains musical notation or singing/performance tags."""
+    if not text:
+        return False
+    if any(ch in text for ch in ["♪", "♫", "♩", "♬", "🎶", "♭", "♯"]):
+        return True
+    lower = text.lower().strip()
+    music_keywords = [
+        "[music]", "(music)", "{music}",
+        "[singing]", "(singing)", "{singing}",
+        "[song]", "(song)", "{song}",
+        "[instrumental]", "(instrumental)", "{instrumental}",
+        "[performance]", "(performance)", "{performance}",
+        "[applause]", "(applause)", "{applause}",
+        "[cheering]", "(cheering)", "{cheering}"
+    ]
+    return any(kw in lower for kw in music_keywords)
+
+
+def is_music_or_performance_block(blk: Any) -> bool:
+    """Checks if a script block represents a musical performance, song, or audio interlude."""
+    cue = (getattr(blk, "cue", None) or "") if not isinstance(blk, dict) else (blk.get("cue") or "")
+    diag = (getattr(blk, "dialogue", None) or "") if not isinstance(blk, dict) else (blk.get("dialogue") or "")
+
+    # 1. Cue column specifically specifies audio, music, song, band, choir, or playback
+    if re.search(r'\b(audio|music|song|track|playback|singing|band|choir|anthem)\b', cue, re.I):
+        return True
+
+    # 2. Stage action in dialogue explicitly states song/performance/instrumental in brackets
+    if re.search(r'[\[({].*?\b(song|singing|sing|instrumental|performance|music|dance|interlude)\b.*?[\])}]', diag, re.I):
+        return True
+
+    return False
+
+
 def match_spoken_text_to_script(
     blocks: List[Any],
     spoken_text: str,
@@ -343,16 +388,24 @@ def match_spoken_text_to_script(
     time_since_last_match: float = 999.0,
     threshold: float = 0.65,
     local_window_size: int = 5,
-    global_search_delay_seconds: float = 3.0
+    global_search_delay_seconds: float = 3.0,
+    is_music: bool = False
 ) -> ScriptMatchResult:
     """
-    Finds the best matching script block for an incoming spoken utterance with anti-jump cooldown.
+    Finds the best matching script block for an incoming spoken utterance with anti-jump cooldown
+    and music/singing protection.
     Algorithm:
-      1. Local Search (±5 lines):
+      1. Music & Performance Recognition:
+         If music or singing is detected (via audio harmonics, musical notation ♪, or tags):
+         - Checks if current line or immediate next lines (0 <= diff <= 2) is a musical performance / song cue.
+         - If found, advances or stays anchored on the music cue.
+         - If not, LOCKS position and strictly disables jumping to prevent mistranscribed singing words
+           from jumping around spoken dialogue.
+      2. Local Search (±5 lines):
          If current_block_index is known, checks candidate blocks within [current_block_index - 5, current_block_index + 5].
          Applies forward-reading priority (+0.06 for next 1-2 lines, +0.03 for next 3-5 lines, +0.02 for slight rewind).
          If a local line matches >= threshold, returns immediately with is_local=True.
-      2. Global Fallback (Cooldown):
+      3. Global Fallback (Cooldown):
          If no line in the local ±5 line window matches:
          - If time_since_last_match < global_search_delay_seconds (3.0s) and current_block_index is set:
            Do NOT jump across the script yet (cooldown active, prevents skipping during short pauses or ad-libs).
@@ -360,12 +413,24 @@ def match_spoken_text_to_script(
            Searches all blocks across the script. Requires solid confidence (>= max(threshold, 0.70)) to execute
            a distant scene jump. Returns the match with is_local=False.
     """
-    words = [w for w in normalize_script_text(spoken_text).split() if len(w) > 1]
-    if len(words) < 2:
-        return ScriptMatchResult(None, 0.0, True)
+    has_music = is_music or is_music_text(spoken_text)
 
     # 1. Local Search (±5 lines around current position)
     if current_block_index is not None:
+        # Music Guard: If music/singing is detected, check if local blocks are a musical cue/song
+        if has_music:
+            for blk in blocks:
+                order_idx = getattr(blk, "order_index", 0) if not isinstance(blk, dict) else blk.get("order_index", 0)
+                diff = order_idx - current_block_index
+                if 0 <= diff <= 2 and is_music_or_performance_block(blk):
+                    return ScriptMatchResult(blk, 0.95, is_local=True)
+            # If no local musical block and music/singing is playing, lock position (do not jump)
+            return ScriptMatchResult(None, 0.0, True)
+
+        words = [w for w in normalize_script_text(spoken_text).split() if len(w) > 1]
+        if len(words) < 2:
+            return ScriptMatchResult(None, 0.0, True)
+
         best_local_block = None
         best_local_score = 0.0
 
@@ -402,6 +467,14 @@ def match_spoken_text_to_script(
         # If within 3 seconds of last match, do NOT allow global jumping yet
         if time_since_last_match < global_search_delay_seconds:
             return ScriptMatchResult(None, 0.0, False)
+    else:
+        words = [w for w in normalize_script_text(spoken_text).split() if len(w) > 1]
+        if len(words) < 2:
+            return ScriptMatchResult(None, 0.0, True)
+
+    # If music is playing and no local cue was matched, never execute a global jump
+    if has_music:
+        return ScriptMatchResult(None, 0.0, False)
 
     # 2. Global Search (all blocks, triggered only after 3s without local match or if starting fresh)
     best_global_block = None

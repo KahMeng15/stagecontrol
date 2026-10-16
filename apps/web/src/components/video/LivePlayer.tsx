@@ -316,7 +316,7 @@ export function LivePlayer({
                 title="Ultra-low latency (~200ms). Requires OBS Max B-frames: 0"
               >
                 <Zap className="w-3.5 h-3.5" />
-                <span>⚡ WebRTC (Low Latency)</span>
+                <span>WebRTC (Low Latency)</span>
               </button>
 
               {/* WebRTC tips toggle */}
@@ -504,8 +504,8 @@ export function LivePlayer({
         {showCC && activeCaption && (
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 max-w-[90%] md:max-w-[80%] pointer-events-none transition-all duration-200 animate-in fade-in slide-in-from-bottom-2">
             <div className="bg-black/90 backdrop-blur-md border border-purple-500/40 text-white px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2.5 text-center">
-              <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
-              <span className="text-xs sm:text-sm md:text-base font-semibold tracking-wide drop-shadow-md select-none text-slate-100">
+              <span className={`w-2 h-2 rounded-full shrink-0 ${activeCaption.includes('♪') ? 'bg-indigo-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
+              <span className={`text-xs sm:text-sm md:text-base font-semibold tracking-wide drop-shadow-md select-none ${activeCaption.includes('♪') ? 'text-indigo-200 italic' : 'text-slate-100'}`}>
                 {activeCaption}
               </span>
             </div>
@@ -560,7 +560,7 @@ export function LivePlayer({
         <div className="px-4 py-2 bg-[#0e111a] border-t border-[#1e2638] flex flex-wrap items-center justify-between text-[11px] text-slate-400">
           <div className="flex items-center gap-3">
             <span className="font-mono text-emerald-400">
-              {playerMode === 'webrtc' ? '⚡ Ultra-Low Latency (~200ms)' : '📼 Buffered HLS (Stereo Audio)'}
+              {playerMode === 'webrtc' ? 'Ultra-Low Latency (~200ms)' : 'Buffered HLS (Stereo Audio)'}
             </span>
             {streamStatus.tracks.length > 0 && (
               <span className="text-slate-500">
@@ -782,7 +782,7 @@ export function LivePlayer({
                         : 'bg-purple-400'
                     }`}
                   />
-                  <span className="font-semibold text-slate-200 truncate">{m.title}</span>
+                  <span className="font-semibold text-slate-200 break-words">{m.title}</span>
                   {m.creator_callsign && (
                     <span className="text-[10px] text-slate-500 bg-[#161d2e] px-1.5 py-0.2 rounded border border-[#232f48]">
                       {m.creator_callsign}
