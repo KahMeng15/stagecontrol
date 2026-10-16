@@ -1,7 +1,7 @@
 import secrets
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 from app.models.enums import EventStatus
@@ -11,6 +11,10 @@ def generate_stream_key() -> str:
 
 def generate_slug() -> str:
     return secrets.token_hex(4)
+
+def generate_public_pin() -> str:
+    # 6-digit random number between 100000 and 999999
+    return f"{secrets.randbelow(900000) + 100000}"
 
 class Event(Base):
     __tablename__ = "events"
@@ -23,6 +27,10 @@ class Event(Base):
     
     stream_key = Column(String(64), unique=True, index=True, default=generate_stream_key, nullable=False)
     created_by_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    # 6-digit public viewer PIN (revocable anytime)
+    public_pin = Column(String(6), index=True, nullable=True)
+    public_pin_enabled = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

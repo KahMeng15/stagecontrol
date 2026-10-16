@@ -2,12 +2,21 @@ import secrets
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session, joinedload
 from app.core.deps import get_current_user, require_event_access, require_min_role
+from app.core.security import create_access_token
 from app.database import get_db
 from app.models.enums import EventRole, has_sufficient_role
 from app.models.event import Event, generate_stream_key
 from app.models.membership import Membership
 from app.models.user import User
-from app.schemas.event import EventCreate, EventDetailResponse, EventResponse, EventUpdate
+from app.schemas.event import (
+    EventCreate,
+    EventDetailResponse,
+    EventResponse,
+    EventUpdate,
+    GuestAuthResponse,
+    GuestPinLogin,
+    PublicEventInfo,
+)
 from app.schemas.membership import MembershipCreate, MembershipResponse, MembershipUpdate
 
 router = APIRouter(prefix="/events", tags=["Events & Crew"])
@@ -115,11 +124,13 @@ def get_event(
     ev_resp.user_role = EventRole(membership.role)
     ev_resp.memberships = [MembershipResponse.model_validate(m) for m in memberships]
 
-    # Show stream key only to stage manager or admin
+    # Show stream key and public PIN only to stage manager or admin
     if has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         ev_resp.stream_key = event.stream_key
+        ev_resp.public_pin = event.public_pin
     else:
         ev_resp.stream_key = None
+        ev_resp.public_pin = None
 
     return ev_resp
 
@@ -143,6 +154,7 @@ def update_event(
     ev_resp = EventResponse.model_validate(event)
     ev_resp.user_role = EventRole(membership.role)
     ev_resp.stream_key = event.stream_key
+    ev_resp.public_pin = event.public_pin
     return ev_resp
 
 @router.delete("/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -168,6 +180,45 @@ def regenerate_stream_key(
     ev_resp = EventResponse.model_validate(event)
     ev_resp.user_role = EventRole(membership.role)
     ev_resp.stream_key = event.stream_key
+    ev_resp.public_pin = event.public_pin
+    return ev_resp
+
+# --- Public 6-Digit PIN Management ---
+
+@router.post("/{event_id}/public-pin", response_model=EventResponse)
+def generate_event_public_pin(
+    event_and_member: tuple[Event, Membership] = Depends(require_min_role(EventRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    event, membership = event_and_member
+    from app.models.event import generate_public_pin
+    
+    event.public_pin = generate_public_pin()
+    event.public_pin_enabled = True
+    db.commit()
+    db.refresh(event)
+
+    ev_resp = EventResponse.model_validate(event)
+    ev_resp.user_role = EventRole(membership.role)
+    ev_resp.stream_key = event.stream_key
+    ev_resp.public_pin = event.public_pin
+    return ev_resp
+
+@router.delete("/{event_id}/public-pin", response_model=EventResponse)
+def revoke_event_public_pin(
+    event_and_member: tuple[Event, Membership] = Depends(require_min_role(EventRole.ADMIN)),
+    db: Session = Depends(get_db)
+):
+    event, membership = event_and_member
+    event.public_pin_enabled = False
+    event.public_pin = None
+    db.commit()
+    db.refresh(event)
+
+    ev_resp = EventResponse.model_validate(event)
+    ev_resp.user_role = EventRole(membership.role)
+    ev_resp.stream_key = event.stream_key
+    ev_resp.public_pin = None
     return ev_resp
 
 # --- Membership Management ---
@@ -291,3 +342,59 @@ def remove_event_member(
     db.delete(target_member)
     db.commit()
     return None
+
+# --- Public 6-Digit PIN Guest Access (No Registration Needed) ---
+
+@router.get("/public/info/{pin}", response_model=PublicEventInfo)
+def get_public_event_info(pin: str, db: Session = Depends(get_db)):
+    clean_pin = pin.strip()
+    event = db.query(Event).filter(
+        Event.public_pin == clean_pin,
+        Event.public_pin_enabled == True
+    ).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or expired 6-digit PIN"
+        )
+    return PublicEventInfo.model_validate(event)
+
+@router.post("/public/join", response_model=GuestAuthResponse)
+def join_with_public_pin(guest_in: GuestPinLogin, db: Session = Depends(get_db)):
+    clean_pin = guest_in.pin.strip()
+    event = db.query(Event).filter(
+        Event.public_pin == clean_pin,
+        Event.public_pin_enabled == True
+    ).first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Invalid or expired 6-digit PIN"
+        )
+    
+    guest_uuid = secrets.token_hex(6)
+    display_name = guest_in.display_name.strip() if guest_in.display_name and guest_in.display_name.strip() else "Guest Viewer"
+
+    token = create_access_token(
+        subject=f"guest_{guest_uuid}",
+        extra_claims={
+            "is_guest": True,
+            "event_id": event.id,
+            "event_slug": event.slug,
+            "role": EventRole.VIEWER.value,
+            "guest_name": display_name
+        }
+    )
+
+    ev_resp = EventResponse.model_validate(event)
+    ev_resp.user_role = EventRole.VIEWER
+    ev_resp.stream_key = None
+    ev_resp.public_pin = None
+
+    return GuestAuthResponse(
+        access_token=token,
+        event=ev_resp,
+        display_name=display_name
+    )

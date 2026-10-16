@@ -51,8 +51,23 @@ def get_current_user(
 def require_event_access(
     event_id: Annotated[str, Path(...)],
     db: Annotated[Session, Depends(get_db)],
-    current_user: Annotated[User, Depends(get_current_user)]
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_scheme)]
 ) -> tuple[Event, Membership]:
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    payload = decode_access_token(credentials.credentials)
+    if not payload or "sub" not in payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     # Check if event_id is either UUID or slug
     event = db.query(Event).filter(
         (Event.id == event_id) | (Event.slug == event_id)
@@ -63,19 +78,50 @@ def require_event_access(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
         )
-    
-    # If superadmin, grant synthetic admin access if not an explicit member
+
+    # Handle Guest Token (issued via 6-digit PIN)
+    if payload.get("is_guest"):
+        if payload.get("event_id") != event.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Guest token is not valid for this event"
+            )
+        
+        # Verify that the PIN access is currently active and not revoked
+        if not event.public_pin_enabled:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Public PIN access has been revoked for this event"
+            )
+
+        guest_membership = Membership(
+            id=f"guest_{payload['sub']}",
+            user_id=payload["sub"],
+            event_id=event.id,
+            role=EventRole.VIEWER.value,
+            callsign=payload.get("guest_name", "Guest Viewer")
+        )
+        return event, guest_membership
+
+    # Handle Standard User Token
+    user_id = payload["sub"]
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive"
+        )
+
     membership = db.query(Membership).filter(
         Membership.event_id == event.id,
-        Membership.user_id == current_user.id
+        Membership.user_id == user.id
     ).first()
 
     if not membership:
-        if current_user.is_superadmin:
-            # Synthetic membership for superadmin
+        if user.is_superadmin:
             membership = Membership(
                 id="superadmin",
-                user_id=current_user.id,
+                user_id=user.id,
                 event_id=event.id,
                 role=EventRole.ADMIN.value,
                 callsign="Superadmin"

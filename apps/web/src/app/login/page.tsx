@@ -3,17 +3,23 @@
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { Sliders, Lock, Mail, User, AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { api, setStoredToken } from '@/lib/api';
+import { Sliders, Lock, Mail, User, AlertCircle, ArrowRight, CheckCircle2, KeyRound, Radio } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const { user, login, register, isLoading } = useAuth();
 
-  const [isRegistering, setIsRegistering] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register' | 'guest'>('login');
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
+
+  // Guest PIN state
+  const [guestPin, setGuestPin] = useState('');
+  const [guestDisplayName, setGuestDisplayName] = useState('');
+
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -30,7 +36,18 @@ export default function LoginPage() {
     setSubmitting(true);
 
     try {
-      if (isRegistering) {
+      if (authMode === 'guest') {
+        const cleanPin = guestPin.replace(/\s+/g, '');
+        if (cleanPin.length !== 6 || !/^\d{6}$/.test(cleanPin)) {
+          throw new Error('Please enter a valid 6-digit PIN');
+        }
+        const res = await api.joinWithPublicPin(cleanPin, guestDisplayName.trim() || undefined);
+        setStoredToken(res.access_token);
+        router.push(`/events/${res.event.slug || res.event.id}`);
+        return;
+      }
+
+      if (authMode === 'register') {
         if (!username || !email || !password) {
           throw new Error('Please fill in all required fields');
         }
@@ -86,11 +103,11 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => {
-                setIsRegistering(false);
+                setAuthMode('login');
                 setError(null);
               }}
-              className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
-                !isRegistering
+              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors ${
+                authMode === 'login'
                   ? 'border-blue-500 text-blue-400'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
@@ -100,16 +117,31 @@ export default function LoginPage() {
             <button
               type="button"
               onClick={() => {
-                setIsRegistering(true);
+                setAuthMode('register');
                 setError(null);
               }}
-              className={`flex-1 pb-3 text-sm font-medium border-b-2 transition-colors ${
-                isRegistering
+              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors ${
+                authMode === 'register'
                   ? 'border-blue-500 text-blue-400'
                   : 'border-transparent text-slate-400 hover:text-slate-200'
               }`}
             >
               Register Crew
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode('guest');
+                setError(null);
+              }}
+              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors flex items-center justify-center gap-1 ${
+                authMode === 'guest'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>Guest PIN</span>
             </button>
           </div>
 
@@ -121,79 +153,131 @@ export default function LoginPage() {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                {isRegistering ? 'Username' : 'Username or Email'}
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                  <User className="w-4 h-4" />
-                </div>
-                <input
-                  type="text"
-                  required
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  placeholder={isRegistering ? 'e.g. stagemanager_alex' : 'alex or alex@event.org'}
-                  className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                />
-              </div>
-            </div>
-
-            {isRegistering && (
+            {authMode === 'guest' ? (
               <>
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Email
+                    6-Digit Event PIN *
                   </label>
                   <div className="relative">
                     <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <Mail className="w-4 h-4" />
+                      <KeyRound className="w-4 h-4" />
                     </div>
                     <input
-                      type="email"
+                      type="text"
                       required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="alex@crew.org"
+                      maxLength={6}
+                      value={guestPin}
+                      onChange={(e) => setGuestPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="e.g. 482910"
+                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-lg tracking-widest font-mono text-blue-400 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-1">
+                    Ask your event organizer or stage manager for the room&apos;s 6-digit access PIN.
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Display Name / Nickname <span className="text-slate-500 font-normal">(Optional)</span>
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      value={guestDisplayName}
+                      onChange={(e) => setGuestDisplayName(e.target.value)}
+                      placeholder="Audience - Hall A or Your Name"
+                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center gap-2">
+                  <Radio className="w-4 h-4 text-blue-400 shrink-0" />
+                  <span>No registration needed. You will join as a read-only viewer.</span>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                    {authMode === 'register' ? 'Username' : 'Username or Email'}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <User className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="text"
+                      required
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      placeholder={authMode === 'register' ? 'e.g. stagemanager_alex' : 'alex or alex@event.org'}
                       className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
                     />
                   </div>
                 </div>
 
+                {authMode === 'register' && (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Email
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                          <Mail className="w-4 h-4" />
+                        </div>
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="alex@crew.org"
+                          className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
+                        Full Name <span className="text-slate-500 font-normal">(Optional)</span>
+                      </label>
+                      <input
+                        type="text"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        placeholder="Alex Chen"
+                        className="w-full px-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      />
+                    </div>
+                  </>
+                )}
+
                 <div>
                   <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Full Name <span className="text-slate-500 font-normal">(Optional)</span>
+                    Password
                   </label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Alex Chen"
-                    className="w-full px-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                  />
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                      <Lock className="w-4 h-4" />
+                    </div>
+                    <input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                    />
+                  </div>
                 </div>
               </>
             )}
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                Password
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                  <Lock className="w-4 h-4" />
-                </div>
-                <input
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••••••"
-                  className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                />
-              </div>
-            </div>
 
             <button
               type="submit"
@@ -204,14 +288,20 @@ export default function LoginPage() {
                 <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>{isRegistering ? 'Create Account' : 'Sign In'}</span>
+                  <span>
+                    {authMode === 'guest'
+                      ? 'Enter Room as Viewer'
+                      : authMode === 'register'
+                      ? 'Create Account'
+                      : 'Sign In'}
+                  </span>
                   <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
           </form>
 
-          {isRegistering && (
+          {authMode === 'register' && (
             <div className="mt-5 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
               <span>The first registered account automatically receives Lead Superadmin permissions.</span>

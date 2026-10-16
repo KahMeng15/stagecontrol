@@ -22,6 +22,10 @@ import {
   AlertCircle,
   Clock,
   Sparkles,
+  KeyRound,
+  Link2,
+  ExternalLink,
+  ShieldOff,
 } from 'lucide-react';
 
 function EventContent() {
@@ -38,6 +42,8 @@ function EventContent() {
   // Copy state
   const [copiedKey, setCopiedKey] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
+  const [copiedPinLink, setCopiedPinLink] = useState(false);
+  const [pinActionLoading, setPinActionLoading] = useState(false);
 
   // Add Member State
   const [showAddMember, setShowAddMember] = useState(false);
@@ -99,6 +105,59 @@ function EventContent() {
       alert(err instanceof Error ? err.message : 'Failed to regenerate stream key');
     } finally {
       setRegenerating(false);
+    }
+  };
+
+  const handleGeneratePin = async () => {
+    if (!event) return;
+    try {
+      setPinActionLoading(true);
+      const updated = await api.generatePublicPin(event.id);
+      setEvent((prev) =>
+        prev
+          ? {
+              ...prev,
+              public_pin: updated.public_pin,
+              public_pin_enabled: true,
+            }
+          : null
+      );
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to generate 6-digit PIN');
+    } finally {
+      setPinActionLoading(false);
+    }
+  };
+
+  const handleRevokePin = async () => {
+    if (!event || !confirm('Are you sure you want to revoke the 6-digit PIN? All guest viewers with this PIN will immediately lose access.')) {
+      return;
+    }
+    try {
+      setPinActionLoading(true);
+      await api.revokePublicPin(event.id);
+      setEvent((prev) =>
+        prev
+          ? {
+              ...prev,
+              public_pin: null,
+              public_pin_enabled: false,
+            }
+          : null
+      );
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : 'Failed to revoke PIN access');
+    } finally {
+      setPinActionLoading(false);
+    }
+  };
+
+  const handleCopyPublicLink = () => {
+    if (event?.public_pin && typeof window !== 'undefined') {
+      const url = `${window.location.origin}/view/${event.public_pin}`;
+      navigator.clipboard.writeText(url);
+      setCopiedPinLink(true);
+      setTimeout(() => setCopiedPinLink(false), 2000);
     }
   };
 
@@ -478,6 +537,119 @@ function EventContent() {
                   />
                 </div>
               </div>
+            </div>
+
+            {/* Public 6-Digit PIN & Audience Access Card */}
+            <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-600/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
+                    <KeyRound className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
+                      <span>Public Audience View Link</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                        event.public_pin_enabled
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-slate-800 text-slate-400 border border-slate-700'
+                      }`}>
+                        {event.public_pin_enabled ? 'ACTIVE' : 'DISABLED'}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Allows anyone to join as a read-only viewer with a 6-digit PIN. No registration needed.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {event.public_pin_enabled && event.public_pin ? (
+                <div className="space-y-4 pt-2">
+                  <div className="p-4 rounded-xl bg-[#0c0e16] border border-[#1e2638] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                    <div>
+                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                        6-Digit Room Access PIN
+                      </span>
+                      <div className="text-3xl font-mono font-bold tracking-widest text-purple-400">
+                        {event.public_pin.slice(0, 3)} {event.public_pin.slice(3)}
+                      </div>
+                    </div>
+
+                    {isAdmin && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={handleGeneratePin}
+                          disabled={pinActionLoading}
+                          className="px-3 py-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
+                          title="Generate a new 6-digit PIN (replaces current)"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${pinActionLoading ? 'animate-spin' : ''}`} />
+                          <span>Rotate PIN</span>
+                        </button>
+                        <button
+                          onClick={handleRevokePin}
+                          disabled={pinActionLoading}
+                          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
+                          title="Immediately block public access"
+                        >
+                          <ShieldOff className="w-3.5 h-3.5" />
+                          <span>Revoke Access</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                      Direct Shareable Public Link
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={typeof window !== 'undefined' ? `${window.location.origin}/view/${event.public_pin}` : `/view/${event.public_pin}`}
+                        className="flex-1 px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-200"
+                      />
+                      <button
+                        onClick={handleCopyPublicLink}
+                        className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+                      >
+                        {copiedPinLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedPinLink ? 'Copied' : 'Copy Link'}</span>
+                      </button>
+                      <a
+                        href={`/view/${event.public_pin}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-300 rounded-lg transition-colors"
+                        title="Open in new tab"
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                      </a>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-1.5">
+                      Share this direct link with your audience or students. They can open it directly or enter the 6-digit PIN on the home page.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="pt-2">
+                  <p className="text-xs text-slate-400 mb-4">
+                    Public viewer access is currently disabled. Only invited crew members can open this event.
+                  </p>
+                  {isAdmin && (
+                    <button
+                      onClick={handleGeneratePin}
+                      disabled={pinActionLoading}
+                      className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-purple-600/20"
+                    >
+                      <KeyRound className="w-4 h-4" />
+                      <span>{pinActionLoading ? 'Generating...' : 'Enable 6-Digit Public PIN'}</span>
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         )}
