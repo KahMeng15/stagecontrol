@@ -146,3 +146,11 @@ def require_min_role(min_role: EventRole) -> Callable:
             )
         return event, membership
     return dependency
+
+def require_superadmin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
+    if not current_user.is_superadmin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Action requires Lead Superadmin privileges"
+        )
+    return current_user

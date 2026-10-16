@@ -3,7 +3,7 @@
 import React, { useEffect, useState, Suspense } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { api, EventDetail, EventRole, EventStatus } from '@/lib/api';
+import { api, EventDetail, EventRole, EventStatus, SystemSettings } from '@/lib/api';
 import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
 import {
@@ -26,6 +26,8 @@ import {
   Link2,
   ExternalLink,
   ShieldOff,
+  Globe,
+  Network,
 } from 'lucide-react';
 
 function EventContent() {
@@ -35,6 +37,8 @@ function EventContent() {
   const { user, isLoading: authLoading } = useAuth();
 
   const [event, setEvent] = useState<EventDetail | null>(null);
+  const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
+  const [selectedDomainType, setSelectedDomainType] = useState<'primary' | 'alternative'>('primary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'control' | 'stream' | 'crew'>('control');
@@ -82,6 +86,7 @@ function EventContent() {
   useEffect(() => {
     if (user && eventId) {
       fetchEventData();
+      api.getSettings().then(setSystemSettings).catch(() => null);
     }
   }, [user, eventId]);
 
@@ -152,9 +157,19 @@ function EventContent() {
     }
   };
 
+  const getActiveBaseUrl = () => {
+    if (selectedDomainType === 'alternative' && systemSettings?.alternative_domain) {
+      return systemSettings.alternative_domain.replace(/\/$/, '');
+    }
+    if (systemSettings?.primary_domain) {
+      return systemSettings.primary_domain.replace(/\/$/, '');
+    }
+    return typeof window !== 'undefined' ? window.location.origin : '';
+  };
+
   const handleCopyPublicLink = () => {
-    if (event?.public_pin && typeof window !== 'undefined') {
-      const url = `${window.location.origin}/view/${event.public_pin}`;
+    if (event?.public_pin) {
+      const url = `${getActiveBaseUrl()}/view/${event.public_pin}`;
       navigator.clipboard.writeText(url);
       setCopiedPinLink(true);
       setTimeout(() => setCopiedPinLink(false), 2000);
@@ -601,14 +616,42 @@ function EventContent() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                      Direct Shareable Public Link
-                    </label>
+                    <div className="flex items-center justify-between mb-1.5">
+                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                        Direct Shareable Public Link
+                      </label>
+                      {systemSettings?.alternative_domain && (
+                        <div className="flex items-center gap-1 bg-[#090b10] border border-[#1e2638] rounded-lg p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDomainType('primary')}
+                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                              selectedDomainType === 'primary'
+                                ? 'bg-purple-600 text-white'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            Primary Domain
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedDomainType('alternative')}
+                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                              selectedDomainType === 'alternative'
+                                ? 'bg-purple-600 text-white'
+                                : 'text-slate-400 hover:text-slate-200'
+                            }`}
+                          >
+                            LAN / Alt Domain
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <input
                         type="text"
                         readOnly
-                        value={typeof window !== 'undefined' ? `${window.location.origin}/view/${event.public_pin}` : `/view/${event.public_pin}`}
+                        value={`${getActiveBaseUrl()}/view/${event.public_pin}`}
                         className="flex-1 px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-200"
                       />
                       <button
@@ -619,7 +662,7 @@ function EventContent() {
                         <span>{copiedPinLink ? 'Copied' : 'Copy Link'}</span>
                       </button>
                       <a
-                        href={`/view/${event.public_pin}`}
+                        href={`${getActiveBaseUrl()}/view/${event.public_pin}`}
                         target="_blank"
                         rel="noreferrer"
                         className="p-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-300 rounded-lg transition-colors"

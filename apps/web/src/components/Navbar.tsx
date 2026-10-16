@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
-import { LogOut, Sliders, Shield } from 'lucide-react';
+import { LogOut, Sliders, Shield, Settings } from 'lucide-react';
 
 export function Navbar() {
   const { user, logout } = useAuth();
@@ -34,6 +34,17 @@ export function Navbar() {
 
         {user && (
           <div className="flex items-center gap-3">
+            {user.is_superadmin && (
+              <Link
+                href="/admin/settings"
+                title="System & Domain Settings"
+                className="p-1.5 px-2.5 rounded-lg border border-[#1e2638] bg-[#11141f] text-slate-400 hover:text-blue-400 hover:border-blue-500/40 hover:bg-blue-500/10 transition-colors flex items-center gap-1.5 text-xs font-medium"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Settings</span>
+              </Link>
+            )}
+
             <div className="hidden sm:flex flex-col text-right">
               <div className="flex items-center justify-end gap-1.5">
                 <span className="text-xs font-medium text-slate-200">

@@ -5,6 +5,7 @@ from app.models.event import Event
 from app.models.membership import Membership
 from app.models.recording import Recording
 from app.models.script import Script, ScriptSection, ScriptBlock
+from app.models.settings import SystemSettings
 
 __all__ = [
     "Base",
@@ -18,4 +19,5 @@ __all__ = [
     "Script",
     "ScriptSection",
     "ScriptBlock",
+    "SystemSettings",
 ]
