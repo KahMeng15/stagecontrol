@@ -18,6 +18,8 @@ services:
     volumes:
       # Live-mount backend python code for instant Uvicorn hot reloading
       - ./apps/api/app:/app/app
+      - ./apps/api/alembic:/app/alembic
+      - ./apps/api/alembic.ini:/app/alembic.ini
       - ./storage:/storage
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 

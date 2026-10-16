@@ -2,8 +2,15 @@ import os
 from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-STORAGE_DIR = BASE_DIR / "storage"
+# Resolve storage directory:
+# In Docker, /storage is mounted at the root.
+# Locally in monorepo, storage/ is located 4 levels up from config.py: apps/api/app/config.py -> stagecontrol/storage
+if Path("/storage").exists() and os.access("/storage", os.W_OK):
+    STORAGE_DIR = Path("/storage")
+else:
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    STORAGE_DIR = repo_root / "storage"
+
 DB_DIR = STORAGE_DIR / "db"
 RECORDINGS_DIR = STORAGE_DIR / "recordings"
 

@@ -6,10 +6,27 @@ from app.database import Base, engine
 import app.models  # noqa: F401
 from app.routers import auth, events, settings as settings_router
 
+import logging
+from pathlib import Path
+from alembic.config import Config
+from alembic import command
+
+logger = logging.getLogger("uvicorn.error")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize SQLite database tables automatically
-    Base.metadata.create_all(bind=engine)
+    # Initialize / upgrade SQLite database schema automatically
+    try:
+        ini_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+        if ini_path.exists():
+            alembic_cfg = Config(str(ini_path))
+            command.upgrade(alembic_cfg, "head")
+            logger.info("Alembic migrations applied successfully.")
+        else:
+            Base.metadata.create_all(bind=engine)
+    except Exception as e:
+        logger.warning(f"Alembic auto-migration failed ({e}), falling back to Base.metadata.create_all.")
+        Base.metadata.create_all(bind=engine)
     yield
 
 app = FastAPI(

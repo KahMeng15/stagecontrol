@@ -46,15 +46,20 @@ wheels/
 .pytest_cache/
 .coverage
 
-# Storage & Media
-storage/db/*.db
-storage/db/*.sqlite3
+# Storage & Databases
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+storage/db/*
+!storage/db/.gitkeep
 storage/recordings/*
 !storage/recordings/.gitkeep
-!storage/db/.gitkeep
+apps/storage/
 
 # IDEs
 .idea/
 .vscode/
 *.swp
 *.swo
+
