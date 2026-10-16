@@ -41,3 +41,4 @@ class Event(Base):
     scripts = relationship("Script", back_populates="event", cascade="all, delete-orphan")
     recordings = relationship("Recording", back_populates="event", cascade="all, delete-orphan")
     markers = relationship("VideoMarker", back_populates="event", cascade="all, delete-orphan")
+    subtitles = relationship("Subtitle", back_populates="event", cascade="all, delete-orphan")

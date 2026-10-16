@@ -4,6 +4,7 @@ from app.models.user import User
 from app.models.event import Event
 from app.models.membership import Membership
 from app.models.recording import Recording, VideoMarker
+from app.models.subtitle import Subtitle
 from app.models.script import Script, ScriptSection, ScriptBlock
 from app.models.settings import SystemSettings
 
@@ -17,6 +18,7 @@ __all__ = [
     "Membership",
     "Recording",
     "VideoMarker",
+    "Subtitle",
     "Script",
     "ScriptSection",
     "ScriptBlock",

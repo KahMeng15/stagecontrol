@@ -22,6 +22,7 @@ class Recording(Base):
     # Relationships
     event = relationship("Event", back_populates="recordings")
     markers = relationship("VideoMarker", back_populates="recording", cascade="all, delete-orphan", order_by="VideoMarker.timestamp_seconds")
+    subtitles = relationship("Subtitle", back_populates="recording", order_by="Subtitle.start_seconds")
 
 class VideoMarker(Base):
     __tablename__ = "video_markers"

@@ -25,8 +25,12 @@ import {
   Bookmark,
   Plus,
   Tag,
+  FileText,
+  Search,
+  Subtitles,
+  Sparkles,
 } from 'lucide-react';
-import { api, Recording, VideoMarker } from '@/lib/api';
+import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
 
 interface RecordingArchiveProps {
   eventId: string;
@@ -64,6 +68,13 @@ export function RecordingArchive({
   const [chapterTime, setChapterTime] = useState<number>(0);
   const [savingChapter, setSavingChapter] = useState(false);
 
+  // Dialogue transcript state
+  const [activeTab, setActiveTab] = useState<'chapters' | 'transcript'>('chapters');
+  const [recordSubtitles, setRecordSubtitles] = useState<SubtitleItem[]>([]);
+  const [loadingSubtitles, setLoadingSubtitles] = useState(false);
+  const [transcriptSearch, setTranscriptSearch] = useState('');
+  const [showReplayCC, setShowReplayCC] = useState(true);
+
   // Stored JWT token for native <video> stream & download requests
   const [token, setToken] = useState<string | null>(null);
 
@@ -95,9 +106,26 @@ export function RecordingArchive({
     }
   }, [eventId, selectedRecording]);
 
+  const loadSubtitles = useCallback(async () => {
+    if (!selectedRecording) {
+      setRecordSubtitles([]);
+      return;
+    }
+    setLoadingSubtitles(true);
+    try {
+      const data = await api.listSubtitles(eventId, undefined, 300, selectedRecording.id);
+      setRecordSubtitles(data);
+    } catch {
+      setRecordSubtitles([]);
+    } finally {
+      setLoadingSubtitles(false);
+    }
+  }, [eventId, selectedRecording]);
+
   useEffect(() => {
     loadMarkers();
-  }, [loadMarkers]);
+    loadSubtitles();
+  }, [loadMarkers, loadSubtitles]);
 
   const handleOpenAddChapter = () => {
     const t = videoRef.current ? videoRef.current.currentTime : currentTime;
@@ -143,6 +171,14 @@ export function RecordingArchive({
     if (seconds === null || seconds === undefined || !videoRef.current) return;
     videoRef.current.currentTime = seconds;
     setCurrentTime(seconds);
+    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+  };
+
+  const handleJumpToSubtitle = (seconds: number | null | undefined) => {
+    if (seconds === null || seconds === undefined || !videoRef.current) return;
+    const target = Math.max(0, seconds);
+    videoRef.current.currentTime = target;
+    setCurrentTime(target);
     videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
   };
 
@@ -442,6 +478,26 @@ export function RecordingArchive({
                 onClick={togglePlay}
               />
 
+              {/* Replay Closed Captions Overlay */}
+              {showReplayCC && (() => {
+                const activeSub = recordSubtitles.find((s) => {
+                  if (s.start_seconds === null || s.start_seconds === undefined) return false;
+                  const end = s.end_seconds ?? s.start_seconds + 3.0;
+                  return currentTime >= s.start_seconds && currentTime <= end;
+                });
+                if (!activeSub) return null;
+                return (
+                  <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-20 max-w-[85%] pointer-events-none transition-all duration-200 animate-in fade-in">
+                    <div className="bg-black/90 backdrop-blur-md border border-purple-500/40 text-white px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2 text-center">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 animate-pulse" />
+                      <span className="text-xs sm:text-sm font-semibold tracking-wide drop-shadow select-none">
+                        {activeSub.text}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Big Play Overlay if paused */}
               {!isPlaying && (
                 <button
@@ -590,6 +646,19 @@ export function RecordingArchive({
                       ))}
                     </div>
 
+                    {/* Subtitles (CC) Toggle */}
+                    <button
+                      onClick={() => setShowReplayCC((prev) => !prev)}
+                      className={`p-1.5 rounded-lg text-xs font-bold transition-colors ${
+                        showReplayCC
+                          ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40'
+                          : 'bg-white/10 hover:bg-white/20 text-slate-400'
+                      }`}
+                      title={showReplayCC ? 'Hide Closed Captions' : 'Show Closed Captions'}
+                    >
+                      <Subtitles className="w-4 h-4" />
+                    </button>
+
                     {/* Download */}
                     <a
                       href={getAuthenticatedUrl(selectedRecording.download_url)}
@@ -623,132 +692,256 @@ export function RecordingArchive({
         </div>
       </div>
 
-      {/* Chapters & Moment Marks Panel (for current recording) */}
+      {/* Chapters & Dialogue Transcript Section */}
       {selectedRecording && (
         <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-xl">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Bookmark className="w-4 h-4 text-purple-400" />
-              <h3 className="text-sm font-bold text-slate-100">
-                Chapters & Timeline Marks ({markers.length})
-              </h3>
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            {/* View Tabs */}
+            <div className="flex items-center gap-1.5 bg-[#0b0e17] p-1 rounded-xl border border-[#1e2638]">
+              <button
+                type="button"
+                onClick={() => setActiveTab('chapters')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                  activeTab === 'chapters'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <Bookmark className="w-3.5 h-3.5" />
+                <span>Chapters ({markers.length})</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActiveTab('transcript')}
+                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
+                  activeTab === 'transcript'
+                    ? 'bg-purple-600 text-white shadow-md'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Dialogue Transcript ({recordSubtitles.length})</span>
+                {recordSubtitles.length > 0 && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                )}
+              </button>
             </div>
-            <button
-              onClick={handleOpenAddChapter}
-              className="px-2.5 py-1 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center gap-1 shadow-sm"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add Chapter</span>
-            </button>
+
+            <div className="flex items-center gap-2">
+              {activeTab === 'chapters' ? (
+                <button
+                  onClick={handleOpenAddChapter}
+                  className="px-2.5 py-1 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center gap-1 shadow-sm"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Chapter</span>
+                </button>
+              ) : (
+                <div className="relative">
+                  <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    type="text"
+                    value={transcriptSearch}
+                    onChange={(e) => setTranscriptSearch(e.target.value)}
+                    placeholder="Search spoken dialogue..."
+                    className="pl-7 pr-3 py-1 text-xs bg-[#0b0e17] border border-[#1e2638] rounded-lg text-slate-200 outline-none w-48 focus:w-60 transition-all"
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
-          {markers.length === 0 ? (
-            <div className="py-6 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
-              <Flag className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
-              <p className="text-xs text-slate-400 font-medium">No chapters or scene marks saved for this take</p>
-              <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
-                Scrub to any moment in the video and click &quot;+ Add Chapter&quot; to bookmark scenes, cues, or rehearsal segments.
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
-              {markers.map((m, idx) => {
-                const nextMarker = markers[idx + 1];
-                const isActive =
-                  m.timestamp_seconds !== null &&
-                  m.timestamp_seconds !== undefined &&
-                  currentTime >= m.timestamp_seconds &&
-                  (nextMarker?.timestamp_seconds ? currentTime < nextMarker.timestamp_seconds : true);
+          {activeTab === 'chapters' ? (
+            markers.length === 0 ? (
+              <div className="py-6 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
+                <Flag className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
+                <p className="text-xs text-slate-400 font-medium">No chapters or scene marks saved for this take</p>
+                <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
+                  Scrub to any moment in the video and click &quot;+ Add Chapter&quot; to bookmark scenes, cues, or rehearsal segments.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
+                {markers.map((m, idx) => {
+                  const nextMarker = markers[idx + 1];
+                  const isActive =
+                    m.timestamp_seconds !== null &&
+                    m.timestamp_seconds !== undefined &&
+                    currentTime >= m.timestamp_seconds &&
+                    (nextMarker?.timestamp_seconds ? currentTime < nextMarker.timestamp_seconds : true);
 
-                return (
-                  <div
-                    key={m.id}
-                    className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 ${
-                      isActive
-                        ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
-                        : 'border-l-4 border-l-transparent hover:bg-[#131826]'
-                    }`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => handleJumpToMarker(m.timestamp_seconds)}
-                      className="flex items-center gap-3 min-w-0 text-left flex-1"
+                  return (
+                    <div
+                      key={m.id}
+                      className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 ${
+                        isActive
+                          ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
+                          : 'border-l-4 border-l-transparent hover:bg-[#131826]'
+                      }`}
                     >
-                      {/* Chapter Index / Status Indicator */}
-                      <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
-                        {isActive ? (
-                          <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
-                        ) : (
-                          <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
-                            {String(idx + 1).padStart(2, '0')}
-                          </span>
-                        )}
-                      </div>
-
-                      {/* Color Tag Indicator */}
-                      <span
-                        className={`w-2 h-2 rounded-full shrink-0 ${
-                          m.color === 'emerald'
-                            ? 'bg-emerald-400'
-                            : m.color === 'amber'
-                            ? 'bg-amber-400'
-                            : m.color === 'rose'
-                            ? 'bg-rose-400'
-                            : m.color === 'blue'
-                            ? 'bg-blue-400'
-                            : 'bg-purple-400'
-                        }`}
-                      />
-
-                      {/* Title & Description */}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 transition-colors truncate">
-                            {m.title}
-                          </span>
-                          {isActive && (
-                            <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
-                              NOW PLAYING
-                            </span>
-                          )}
-                        </div>
-                        {m.description && (
-                          <p className="text-[11px] text-slate-400 truncate mt-0.5">{m.description}</p>
-                        )}
-                      </div>
-                    </button>
-
-                    {/* Timecode Badge & Action Buttons */}
-                    <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
                         onClick={() => handleJumpToMarker(m.timestamp_seconds)}
-                        className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
-                          isActive
-                            ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
-                            : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
-                        }`}
-                        title="Jump to this time"
+                        className="flex items-center gap-3 min-w-0 text-left flex-1"
                       >
-                        <Play className="w-2.5 h-2.5 fill-current" />
-                        <span>{formatTime(m.timestamp_seconds || 0)}</span>
+                        {/* Chapter Index / Status Indicator */}
+                        <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
+                          {isActive ? (
+                            <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
+                          ) : (
+                            <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
+                              {String(idx + 1).padStart(2, '0')}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Color Tag Indicator */}
+                        <span
+                          className={`w-2 h-2 rounded-full shrink-0 ${
+                            m.color === 'emerald'
+                              ? 'bg-emerald-400'
+                              : m.color === 'amber'
+                              ? 'bg-amber-400'
+                              : m.color === 'rose'
+                              ? 'bg-rose-400'
+                              : m.color === 'blue'
+                              ? 'bg-blue-400'
+                              : 'bg-purple-400'
+                          }`}
+                        />
+
+                        {/* Title & Description */}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 transition-colors truncate">
+                              {m.title}
+                            </span>
+                            {isActive && (
+                              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
+                                NOW PLAYING
+                              </span>
+                            )}
+                          </div>
+                          {m.description && (
+                            <p className="text-[11px] text-slate-400 truncate mt-0.5">{m.description}</p>
+                          )}
+                        </div>
                       </button>
 
-                      {(isSMOrAdmin || isAdmin) && (
+                      {/* Timecode Badge & Action Buttons */}
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           type="button"
-                          onClick={() => handleDeleteMarker(m.id)}
-                          className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
-                          title="Delete chapter"
+                          onClick={() => handleJumpToMarker(m.timestamp_seconds)}
+                          className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
+                            isActive
+                              ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                              : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
+                          }`}
+                          title="Jump to this time"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Play className="w-2.5 h-2.5 fill-current" />
+                          <span>{formatTime(m.timestamp_seconds || 0)}</span>
                         </button>
-                      )}
+
+                        {(isSMOrAdmin || isAdmin) && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteMarker(m.id)}
+                            className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
+                            title="Delete chapter"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )
+          ) : (
+            /* Dialogue Transcript Tab */
+            recordSubtitles.length === 0 ? (
+              <div className="py-8 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
+                <FileText className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
+                <p className="text-xs text-slate-400 font-medium">No dialogue lines transcribed for this take</p>
+                <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
+                  Dialogue spoken during live broadcasts is captured by Malaysian Whisper and synchronized with video timestamps.
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
+                {recordSubtitles
+                  .filter((s) => !transcriptSearch.trim() || s.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
+                  .map((sub, idx, arr) => {
+                    const nextSub = arr[idx + 1];
+                    const subStart = sub.start_seconds || 0;
+                    const subEnd = sub.end_seconds ?? (nextSub?.start_seconds ?? subStart + 3.0);
+                    const isCurrent = currentTime >= subStart && currentTime < subEnd;
+
+                    return (
+                      <div
+                        key={sub.id || idx}
+                        onClick={() => handleJumpToSubtitle(sub.start_seconds)}
+                        className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 cursor-pointer ${
+                          isCurrent
+                            ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
+                            : 'border-l-4 border-l-transparent hover:bg-[#131826]'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
+                            {isCurrent ? (
+                              <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
+                            ) : (
+                              <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
+                                {String(idx + 1).padStart(2, '0')}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium text-slate-200 group-hover:text-purple-300 transition-colors leading-relaxed">
+                                {sub.text}
+                              </span>
+                              {isCurrent && (
+                                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
+                                  PLAYING
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 bg-[#161c2c] text-slate-400 rounded">
+                            {sub.language || 'en'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleJumpToSubtitle(sub.start_seconds);
+                            }}
+                            className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
+                              isCurrent
+                                ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
+                                : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
+                            }`}
+                            title="Jump video playback to this line"
+                          >
+                            <Play className="w-2.5 h-2.5 fill-current" />
+                            <span>{formatTime(sub.start_seconds || 0)}</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+              </div>
+            )
           )}
         </div>
       )}

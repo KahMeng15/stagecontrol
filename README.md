@@ -9,7 +9,7 @@ A lightweight, self-hostable live event production hub for school, university, a
 | Milestone | Feature | Status | Description |
 |---|---|---|---|
 | **01** | **Basic Authentication & Event Access** | ✅ **Complete** | Argon2id auth, JWT sessions, event roles (`admin`, `stage_manager`, `crew`, `presenter`, `viewer`), event isolation & crew management |
-| **02** | **Live Video & Recording Playback** | ✅ **Complete** | OBS → MediaMTX → WebRTC low-latency WHEP + HLS fallback + seekable fMP4 recording archive + timeline chapters & live cue marks |
+| **02** | **Live Video, Recording & AI Subtitles** | ✅ **Complete** | OBS → MediaMTX → WebRTC/HLS + seekable recording archive + chapters & marks + server-side Malaysian Whisper live transcription & subtitles (Manglish & Malay slang) |
 | **03** | **Script Import & Synchronized Following** | 🟡 *Next* | DOCX/Text parser, line-by-line stage advancement via WebSockets, presenter teleprompter mode |
 | **04** | **Walkie-Talkie Push-to-Talk Comms** | ⚪ *Planned* | WebRTC hold-to-talk voice channel with live speaker indicators and network resilience |
 

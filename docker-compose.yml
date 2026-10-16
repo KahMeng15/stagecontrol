@@ -15,6 +15,7 @@ services:
       - MEDIAMTX_API_URL=http://mediamtx:9997
       - MEDIAMTX_HLS_URL=http://localhost:8888
       - MEDIAMTX_WEBRTC_URL=http://localhost:8889
+      - MEDIAMTX_RTMP_URL=rtmp://mediamtx:1935
     volumes:
       - ./storage:/storage
     healthcheck:

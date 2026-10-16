@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 import app.models  # noqa: F401
-from app.routers import auth, events, settings as settings_router, streams
+from app.routers import auth, events, settings as settings_router, streams, subtitles
+from app.services.transcription import transcription_service
 
 import logging
 from pathlib import Path
@@ -27,6 +28,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Alembic auto-migration failed ({e}), falling back to Base.metadata.create_all.")
         Base.metadata.create_all(bind=engine)
+
+    # Start the automated stream transcription monitor
+    await transcription_service.start_monitor()
+
     yield
 
 app = FastAPI(
@@ -52,6 +57,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(events.router, prefix=settings.API_V1_STR)
 app.include_router(streams.router, prefix=settings.API_V1_STR)
+app.include_router(subtitles.router, prefix=settings.API_V1_STR)
 app.include_router(settings_router.router, prefix=settings.API_V1_STR)
 
 @app.get("/api/health")
