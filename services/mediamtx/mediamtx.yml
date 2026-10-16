@@ -14,12 +14,12 @@ rtmpAddress: :1935
 # WebRTC Server (low-latency browser playback & WHIP ingest)
 webrtc: yes
 webrtcAddress: :8889
-webrtcAllowCrossOrigin: yes
+webrtcAllowOrigins: ['*']
 
 # HLS Server (recording playback / seekable fallback)
 hls: yes
 hlsAddress: :8888
-hlsAllowCrossOrigin: yes
+hlsAllowOrigins: ['*']
 
 # Paths
 paths:
