@@ -110,6 +110,15 @@ For school/university events and public audiences who should not have to create 
 
 ---
 
+## 🌐 Global & Alternative LAN Domain Configuration
+
+Lead Superadmins can configure global domains in **Settings** (`/admin/settings`):
+- **Primary Global Domain**: The canonical public domain (e.g. `https://stagecontrol.myschool.edu`) used when generating shareable links, teleprompter views, and guest PIN links.
+- **Alternative / LAN Fallback Domain**: Secondary domain or local IP (e.g. `http://192.168.1.100:3000`) for isolated venue Wi-Fi networks where devices cannot access the public internet.
+- **Link Switcher**: Event control room includes a one-click toggle to copy links formatted with either the Primary or Alternative domain.
+
+---
+
 ## 🧪 Testing
 
 ### Backend Unit & Integration Tests (Argon2id, JWT, RBAC, Event Isolation)
