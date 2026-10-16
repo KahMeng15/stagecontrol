@@ -1,5 +1,5 @@
 from typing import Annotated, Callable
-from fastapi import Depends, HTTPException, Path, status
+from fastapi import Depends, HTTPException, Path, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -13,17 +13,26 @@ from app.models.user import User
 security_scheme = HTTPBearer(auto_error=False)
 
 def get_current_user(
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_scheme)]
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_scheme)] = None
 ) -> User:
-    if not credentials or not credentials.credentials:
+    raw_token = None
+    if credentials and credentials.credentials:
+        raw_token = credentials.credentials
+    elif "token" in request.query_params:
+        raw_token = request.query_params["token"]
+    elif "access_token" in request.cookies:
+        raw_token = request.cookies["access_token"]
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    payload = decode_access_token(credentials.credentials)
+    payload = decode_access_token(raw_token)
     if not payload or "sub" not in payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -49,18 +58,27 @@ def get_current_user(
     return user
 
 def require_event_access(
+    request: Request,
     event_id: Annotated[str, Path(...)],
     db: Annotated[Session, Depends(get_db)],
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_scheme)]
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security_scheme)] = None
 ) -> tuple[Event, Membership]:
-    if not credentials or not credentials.credentials:
+    raw_token = None
+    if credentials and credentials.credentials:
+        raw_token = credentials.credentials
+    elif "token" in request.query_params:
+        raw_token = request.query_params["token"]
+    elif "access_token" in request.cookies:
+        raw_token = request.cookies["access_token"]
+
+    if not raw_token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    payload = decode_access_token(credentials.credentials)
+    payload = decode_access_token(raw_token)
     if not payload or "sub" not in payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

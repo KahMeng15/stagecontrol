@@ -48,6 +48,15 @@ export function RecordingArchive({
   const [volume, setVolume] = useState(1);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [autoPlayNext, setAutoPlayNext] = useState(false);
+  const [videoError, setVideoError] = useState<string | null>(null);
+
+  // Stored JWT token for native <video> stream & download requests
+  const [token, setToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    setToken(api.getToken());
+  }, []);
 
   // Rename modal / input state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -59,6 +68,13 @@ export function RecordingArchive({
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
+
+  const getAuthenticatedUrl = useCallback((url: string) => {
+    if (!url) return '';
+    if (!token) return url;
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}token=${encodeURIComponent(token)}`;
+  }, [token]);
 
   const loadRecordings = useCallback(async () => {
     try {
@@ -80,6 +96,24 @@ export function RecordingArchive({
     loadRecordings();
   }, [loadRecordings]);
 
+  // When selected recording changes, reset time, clear error, and auto-play if requested
+  useEffect(() => {
+    if (selectedRecording && videoRef.current) {
+      setCurrentTime(0);
+      setVideoError(null);
+      if (autoPlayNext) {
+        videoRef.current
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch((err) => {
+            console.error("Playback start error:", err);
+            setIsPlaying(false);
+          });
+        setAutoPlayNext(false);
+      }
+    }
+  }, [selectedRecording?.id, autoPlayNext]);
+
   // Video event handlers
   const handleTimeUpdate = () => {
     if (videoRef.current) {
@@ -99,7 +133,17 @@ export function RecordingArchive({
   const togglePlay = () => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      videoRef.current
+        .play()
+        .then(() => {
+          setIsPlaying(true);
+          setVideoError(null);
+        })
+        .catch((err) => {
+          console.error("Playback error:", err);
+          setVideoError("Unable to play video take. Click play to retry.");
+          setIsPlaying(false);
+        });
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -247,15 +291,40 @@ export function RecordingArchive({
         <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden group">
           {selectedRecording ? (
             <>
+              {videoError && (
+                <div className="absolute top-4 left-4 right-4 bg-red-950/80 border border-red-500/40 text-red-300 text-xs p-2.5 rounded-lg flex items-center justify-between z-20">
+                  <div className="flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                    <span>{videoError}</span>
+                  </div>
+                  <button
+                    onClick={() => setVideoError(null)}
+                    className="p-1 text-red-400 hover:text-red-200"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
               <video
                 ref={videoRef}
-                src={selectedRecording.stream_url}
+                key={selectedRecording.id}
+                src={getAuthenticatedUrl(selectedRecording.stream_url)}
                 playsInline
-                className="w-full h-full object-contain"
+                preload="auto"
+                className="w-full h-full object-contain cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
-                onPlay={() => setIsPlaying(true)}
+                onPlay={() => {
+                  setIsPlaying(true);
+                  setVideoError(null);
+                }}
                 onPause={() => setIsPlaying(false)}
+                onError={(e) => {
+                  console.error("Video error event:", e);
+                  setVideoError("Unable to load video take. Click play or download take.");
+                  setIsPlaying(false);
+                }}
                 onClick={togglePlay}
               />
 
@@ -263,7 +332,7 @@ export function RecordingArchive({
               {!isPlaying && (
                 <button
                   onClick={togglePlay}
-                  className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/20 transition-colors"
+                  className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/20 transition-colors z-10"
                 >
                   <div className="w-16 h-16 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white flex items-center justify-center shadow-xl shadow-blue-600/30 transition-transform transform hover:scale-105">
                     <Play className="w-7 h-7 ml-1" />
@@ -272,7 +341,7 @@ export function RecordingArchive({
               )}
 
               {/* Floating Bottom Scrubber & Controls */}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col gap-2">
+              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col gap-2 z-10">
                 {/* Timeline Scrubber */}
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-mono text-slate-300 w-10 text-right">
@@ -357,7 +426,7 @@ export function RecordingArchive({
 
                     {/* Download */}
                     <a
-                      href={selectedRecording.download_url}
+                      href={getAuthenticatedUrl(selectedRecording.download_url)}
                       download
                       className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
                       title="Download MP4"
@@ -511,10 +580,11 @@ export function RecordingArchive({
                   <div className="flex items-center justify-between pt-3 border-t border-[#1e2638]/60">
                     <button
                       onClick={() => {
-                        setSelectedRecording(rec);
-                        if (videoRef.current) {
-                          videoRef.current.currentTime = 0;
-                          videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+                        if (isSelected) {
+                          togglePlay();
+                        } else {
+                          setSelectedRecording(rec);
+                          setAutoPlayNext(true);
                         }
                       }}
                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
@@ -523,13 +593,13 @@ export function RecordingArchive({
                           : 'bg-[#182030] hover:bg-[#202b42] text-slate-200'
                       }`}
                     >
-                      <Play className="w-3.5 h-3.5" />
-                      <span>{isSelected ? 'Loaded in Player' : 'Play Take'}</span>
+                      {isSelected && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                      <span>{isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take'}</span>
                     </button>
 
                     <div className="flex items-center gap-2">
                       <a
-                        href={rec.download_url}
+                        href={getAuthenticatedUrl(rec.download_url)}
                         download
                         className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] rounded-lg transition-colors"
                         title="Download MP4"

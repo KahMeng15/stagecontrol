@@ -126,8 +126,13 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     assert full_resp.status_code == 200
     assert full_resp.content == mock_content
 
-    # 5. Test download endpoint
-    dl_resp = client.get(f"/api/events/{event.id}/recordings/{rec_id}/download", headers=headers)
+    # Query param token streaming (used by HTML5 <video> tags)
+    query_resp = client.get(f"/api/events/{event.id}/recordings/{rec_id}/stream?token={token}")
+    assert query_resp.status_code == 200
+    assert query_resp.content == mock_content
+
+    # 5. Test download endpoint with query param token
+    dl_resp = client.get(f"/api/events/{event.id}/recordings/{rec_id}/download?token={token}")
     assert dl_resp.status_code == 200
     assert dl_resp.content == mock_content
 
