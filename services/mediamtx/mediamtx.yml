@@ -1,0 +1,36 @@
+# MediaMTX Configuration for StageControl
+
+logLevel: info
+logDestinations: [stdout]
+
+# API for stats and stream state
+api: yes
+apiAddress: :9997
+
+# RTMP Server (OBS input)
+rtmp: yes
+rtmpAddress: :1935
+
+# WebRTC Server (low-latency browser playback & WHIP ingest)
+webrtc: yes
+webrtcAddress: :8889
+webrtcAllowCrossOrigin: yes
+
+# HLS Server (recording playback / seekable fallback)
+hls: yes
+hlsAddress: :8888
+hlsAllowCrossOrigin: yes
+
+# Paths
+paths:
+  all:
+    # Allow RTMP / WHIP publishers
+    source: publisher
+    
+  # Live streams with automated fMP4 recording to persistent volume
+  ~^live/(?P<key>.+)$:
+    source: publisher
+    record: yes
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S.mp4
+    recordFormat: fmp4
+    recordPartDuration: 2s

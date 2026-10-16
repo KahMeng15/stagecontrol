@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: stagecontrol-api
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:////storage/db/stageflow.db
+      - SECRET_KEY=stagecontrol-super-secure-dev-secret-key-change-in-prod-2026
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+      - MEDIAMTX_HLS_URL=http://localhost:8888
+      - MEDIAMTX_WEBRTC_URL=http://localhost:8889
+    volumes:
+      - ./storage:/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: stagecontrol-web
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+    depends_on:
+      - api
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: stagecontrol-mediamtx
+    restart: unless-stopped
+    ports:
+      - "1935:1935"   # RTMP (OBS stream ingest)
+      - "8888:8888"   # HLS stream & playback
+      - "8889:8889"   # WebRTC player & WHIP ingest
+      - "9997:9997"   # Management API
+    volumes:
+      - ./services/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./storage/recordings:/recordings
+
+volumes:
+  storage:
