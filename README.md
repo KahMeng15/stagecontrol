@@ -93,8 +93,20 @@ This boots optimized production builds:
 | Access Walkie-Talkie (Milestone 4) | ✅ | ✅ | ✅ | ❌ | ❌ |
 | Teleprompter View | ✅ | ✅ | ✅ | ✅ | ❌ |
 | Watch Program Stream | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Manage Public 6-Digit PIN | ✅ | ❌ | ❌ | ❌ | ❌ |
 
 *Note: The first account registered in the system automatically receives Lead Superadmin privileges for initial setup.*
+
+---
+
+## 🎟️ Public 6-Digit PIN Guest Access (No Account Required)
+
+For school/university events and public audiences who should not have to create an account:
+- **Admin Control**: An Admin can generate a 6-digit PIN (e.g. `482 910`) and share the direct link (`/view/482910`).
+- **Instant Revocation**: Clicking "Revoke Access" instantly closes public entry and revokes existing guest viewer sessions.
+- **Audience Entry Flow**:
+  1. **Direct Link**: Guests open `http://localhost:3000/view/482910`, enter an optional nickname (e.g. `Audience - Hall A`), and enter with one click.
+  2. **Keypad Entry**: On the main login page, guests select the **Guest PIN** tab, type the 6-digit PIN, and enter immediately in read-only **Viewer** mode.
 
 ---
 
