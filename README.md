@@ -9,8 +9,8 @@ A lightweight, self-hostable live event production hub for school, university, a
 | Milestone | Feature | Status | Description |
 |---|---|---|---|
 | **01** | **Basic Authentication & Event Access** | ✅ **Complete** | Argon2id auth, JWT sessions, event roles (`admin`, `stage_manager`, `crew`, `presenter`, `viewer`), event isolation & crew management |
-| **02** | **Live Video & Recording Playback** | 🟡 *Next* | OBS → MediaMTX → WebRTC ultra-low-latency player + FFmpeg seekable HLS recording archive |
-| **03** | **Script Import & Synchronized Following** | ⚪ *Planned* | DOCX/Text parser, line-by-line stage advancement via WebSockets, presenter teleprompter mode |
+| **02** | **Live Video & Recording Playback** | ✅ **Complete** | OBS → MediaMTX → WebRTC ultra-low-latency WHEP player + HLS fallback + seekable fMP4 recording archive |
+| **03** | **Script Import & Synchronized Following** | 🟡 *Next* | DOCX/Text parser, line-by-line stage advancement via WebSockets, presenter teleprompter mode |
 | **04** | **Walkie-Talkie Push-to-Talk Comms** | ⚪ *Planned* | WebRTC hold-to-talk voice channel with live speaker indicators and network resilience |
 
 ---
@@ -118,6 +118,26 @@ Lead Superadmins can configure global domains in **Settings** (`/admin/settings`
 - **Link Switcher**: Event control room includes a one-click toggle to copy links formatted with either the Primary or Alternative domain.
 
 ---
+
+## 📺 Live Video Streaming & Recording Playback (Milestone 2)
+
+- **OBS Studio RTMP & WHIP Ingest**:
+  - RTMP Endpoint: `rtmp://<host>:1935/live`
+  - Stream Key: Secret event stream key generated per event
+  - WebRTC WHIP URL: `http://<host>:8889/live/<stream_key>/whip`
+- **Dual-Engine Browser Player**:
+  - **WebRTC WHEP (Ultra-Low Latency)**: ~150-250ms sub-second delivery for stage managers, lighting ops, and camera directors.
+  - **HLS Fallback**: Buffered playback with adaptive sync via `hls.js` or native Safari HLS.
+- **Automated Crash-Resilient fMP4 Recording**:
+  - Live streams are recorded automatically in fragmented MP4 (`fmp4`) format to persistent storage (`storage/recordings/`).
+  - Survives container and service restarts with zero data corruption.
+- **Timeline Scrubbing & Replay Archive**:
+  - Full HTTP 206 Partial Content (range request) video streaming support.
+  - Seek backward/forward 10s, variable speed control (0.5x to 2x), volume control, and full-resolution MP4 downloads.
+  - Rename takes and manage recordings with role-based access control.
+
+---
+
 
 ## 🧪 Testing
 

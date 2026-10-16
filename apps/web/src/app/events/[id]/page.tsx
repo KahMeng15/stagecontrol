@@ -6,6 +6,8 @@ import { useAuth } from '@/context/AuthContext';
 import { api, EventDetail, EventRole, EventStatus, SystemSettings } from '@/lib/api';
 import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
+import { LivePlayer } from '@/components/video/LivePlayer';
+import { RecordingArchive } from '@/components/video/RecordingArchive';
 import {
   Radio,
   Users,
@@ -28,7 +30,10 @@ import {
   ShieldOff,
   Globe,
   Network,
+  Film,
+  Zap,
 } from 'lucide-react';
+
 
 function EventContent() {
   const router = useRouter();
@@ -41,7 +46,7 @@ function EventContent() {
   const [selectedDomainType, setSelectedDomainType] = useState<'primary' | 'alternative'>('primary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'control' | 'stream' | 'crew'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'stream' | 'recordings' | 'crew'>('control');
 
   // Copy state
   const [copiedKey, setCopiedKey] = useState(false);
@@ -334,6 +339,18 @@ function EventContent() {
               <span>Control Room</span>
             </button>
 
+            <button
+              onClick={() => setActiveTab('recordings')}
+              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
+                activeTab === 'recordings'
+                  ? 'border-blue-500 text-blue-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Film className="w-4 h-4" />
+              <span>Recordings & Replay</span>
+            </button>
+
             {isSMOrAdmin && (
               <button
                 onClick={() => setActiveTab('stream')}
@@ -369,40 +386,16 @@ function EventContent() {
           <div className="space-y-6">
             {/* Control Room Top Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Video Player Card (Prepared for Milestone 2) */}
-              <div className="lg:col-span-2 bg-[#11141f] border border-[#1e2638] rounded-2xl overflow-hidden flex flex-col">
-                <div className="px-4 py-3 border-b border-[#1e2638] flex items-center justify-between bg-[#0e111a]">
-                  <div className="flex items-center gap-2">
-                    <Tv className="w-4 h-4 text-blue-400" />
-                    <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                      Live Program Feed
-                    </span>
-                  </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                    event.status === 'live' ? 'bg-red-500/20 text-red-400' : 'bg-slate-800 text-slate-400'
-                  }`}>
-                    {event.status === 'live' ? 'STREAM READY' : 'OFF AIR'}
-                  </span>
-                </div>
-
-                <div className="aspect-video bg-black/60 flex flex-col items-center justify-center p-6 text-center relative group">
-                  <Tv className="w-12 h-12 text-slate-600 mb-3" />
-                  <p className="text-sm font-medium text-slate-300">
-                    MediaMTX Low-Latency Player
-                  </p>
-                  <p className="text-xs text-slate-500 max-w-sm mt-1">
-                    Connect OBS Studio with your event stream key to broadcast live WebRTC video to all crew.
-                  </p>
-                  {isSMOrAdmin && (
-                    <button
-                      onClick={() => setActiveTab('stream')}
-                      className="mt-4 px-3 py-1.5 text-xs font-medium bg-blue-600/20 text-blue-400 border border-blue-500/30 rounded-lg hover:bg-blue-600/30 transition-colors"
-                    >
-                      View OBS Stream Key
-                    </button>
-                  )}
-                </div>
+              {/* Ultra-low latency Live Video Player (Milestone 2) */}
+              <div className="lg:col-span-2">
+                <LivePlayer
+                  eventId={event.id}
+                  streamKey={event.stream_key}
+                  isSMOrAdmin={isSMOrAdmin}
+                  onOpenStreamSetup={() => setActiveTab('stream')}
+                />
               </div>
+
 
               {/* Walkie-Talkie & Comms Panel (Prepared for Milestone 4) */}
               <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 flex flex-col justify-between">
@@ -460,6 +453,15 @@ function EventContent() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* Recordings & Replay Archive Tab (Milestone 2) */}
+        {activeTab === 'recordings' && (
+          <RecordingArchive
+            eventId={event.id}
+            isAdmin={isAdmin}
+            isSMOrAdmin={isSMOrAdmin}
+          />
         )}
 
         {/* OBS Stream Setup Tab */}
@@ -551,8 +553,34 @@ function EventContent() {
                     className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-400"
                   />
                 </div>
+
+                {/* Important OBS Settings Note for WebRTC */}
+                <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-500/30 text-xs space-y-2">
+                  <div className="flex items-center gap-2 font-bold text-blue-300">
+                    <Zap className="w-4 h-4 text-amber-400" />
+                    <span>Recommended OBS Settings for Ultra-Low Latency (~200ms)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-300 leading-relaxed">
+                    WebRTC requires video frames without future dependencies:
+                  </p>
+                  <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-1 pl-1">
+                    <li>
+                      <strong className="text-slate-200">Max B-frames: 0</strong> (in OBS: <em>Settings → Output → Advanced → Max B-frames: 0</em>)
+                    </li>
+                    <li>
+                      <strong className="text-slate-200">Tune: zerolatency</strong> (or low latency mode)
+                    </li>
+                    <li>
+                      <strong className="text-slate-200">Keyframe Interval: 1s or 2s</strong>
+                    </li>
+                  </ul>
+                  <p className="text-[10px] text-slate-500 italic pt-1 border-t border-blue-900/40">
+                    Tip: If B-frames remain enabled (OBS default is 2), simply switch the control room player to <strong>HLS</strong> mode, which supports B-frames with full stereo audio.
+                  </p>
+                </div>
               </div>
             </div>
+
 
             {/* Public 6-Digit PIN & Audience Access Card */}
             <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">

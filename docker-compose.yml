@@ -41,10 +41,13 @@ services:
     container_name: stagecontrol-mediamtx
     restart: unless-stopped
     ports:
-      - "1935:1935"   # RTMP (OBS stream ingest)
-      - "8888:8888"   # HLS stream & playback
-      - "8889:8889"   # WebRTC player & WHIP ingest
-      - "9997:9997"   # Management API
+      - "1935:1935"       # RTMP (OBS stream ingest)
+      - "8888:8888"       # HLS stream & playback
+      - "8889:8889"       # WebRTC player & WHIP ingest
+      - "8189:8189/udp"   # WebRTC ICE UDP media stream
+      - "8189:8189/tcp"   # WebRTC ICE TCP media fallback
+      - "9996:9996"       # HTTP Playback API & player
+      - "9997:9997"       # Management API
     volumes:
       - ./services/mediamtx/mediamtx.yml:/mediamtx.yml:ro
       - ./storage/recordings:/recordings

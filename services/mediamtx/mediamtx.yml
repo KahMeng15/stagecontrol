@@ -7,6 +7,18 @@ logDestinations: [stdout]
 api: yes
 apiAddress: :9997
 
+# Authentication permissions
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass: ""
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
+
 # RTMP Server (OBS input)
 rtmp: yes
 rtmpAddress: :1935
@@ -15,11 +27,21 @@ rtmpAddress: :1935
 webrtc: yes
 webrtcAddress: :8889
 webrtcAllowOrigins: ['*']
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcAdditionalHosts: ['localhost', '127.0.0.1']
+
 
 # HLS Server (recording playback / seekable fallback)
 hls: yes
 hlsAddress: :8888
 hlsAllowOrigins: ['*']
+hlsAlwaysRemux: yes
+
+# HTTP Playback Server for recorded fMP4 segments
+playback: yes
+playbackAddress: :9996
+playbackAllowOrigins: ['*']
 
 # Paths
 paths:
@@ -31,6 +53,9 @@ paths:
   ~^live/(?P<key>.+)$:
     source: publisher
     record: yes
-    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S.mp4
+    recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
     recordFormat: fmp4
-    recordPartDuration: 2s
+    recordPartDuration: 1s
+    recordSegmentDuration: 1h
+
+
