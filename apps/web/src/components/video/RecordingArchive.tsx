@@ -69,7 +69,7 @@ export function RecordingArchive({
   const [savingChapter, setSavingChapter] = useState(false);
 
   // Dialogue transcript state
-  const [activeTab, setActiveTab] = useState<'chapters' | 'transcript'>('chapters');
+  const [activeTab, setActiveTab] = useState<'chapters' | 'transcript'>('transcript');
   const [recordSubtitles, setRecordSubtitles] = useState<SubtitleItem[]>([]);
   const [loadingSubtitles, setLoadingSubtitles] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState('');

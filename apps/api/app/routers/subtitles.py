@@ -36,6 +36,7 @@ def get_event_subtitles(
     event, _ = event_and_member
 
     if recording_id:
+        import re
         recording = db.query(Recording).filter(
             Recording.id == recording_id,
             Recording.event_id == event.id
@@ -48,26 +49,46 @@ def get_event_subtitles(
         if search:
             query = query.filter(Subtitle.text.ilike(f"%{search}%"))
 
-        # 1. First check subtitles explicitly tagged with this recording_id
-        explicit_subs = query.filter(Subtitle.recording_id == recording.id).all()
-        if explicit_subs:
-            return sorted(explicit_subs, key=lambda s: s.start_seconds or 0.0)
-
-        # 2. Fallback to time-window matching for previously recorded takes
+        # Determine true recording start timestamp (extract from filename if available)
         rec_start = recording.created_at
+        if rec_start and rec_start.tzinfo is None:
+            rec_start = rec_start.replace(tzinfo=timezone.utc)
+
+        match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', recording.filename or "")
+        if match:
+            dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
+            rec_start = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
         rec_duration = recording.duration_seconds if recording.duration_seconds > 0 else 7200.0
-        time_subs = query.filter(
-            Subtitle.created_at >= rec_start - timedelta(seconds=5),
-            Subtitle.created_at <= rec_start + timedelta(seconds=rec_duration + 10)
-        ).order_by(Subtitle.created_at.asc()).limit(limit).all()
 
-        for sub in time_subs:
-            if sub.start_seconds is None or sub.start_seconds == 0.0:
-                diff = max(0.0, (sub.created_at - rec_start).total_seconds())
-                sub.start_seconds = round(diff, 1)
-                sub.end_seconds = round(diff + 3.0, 1)
+        # Match subtitles explicitly tagged with this recording_id OR falling inside take time window
+        candidates = query.filter(
+            (Subtitle.recording_id == recording.id) |
+            (
+                (Subtitle.created_at >= rec_start - timedelta(seconds=2)) &
+                (Subtitle.created_at <= rec_start + timedelta(seconds=rec_duration + 5))
+            )
+        ).all()
 
-        return sorted(time_subs, key=lambda s: s.start_seconds or 0.0)
+        modified = False
+        for s in candidates:
+            if s.recording_id != recording.id:
+                s.recording_id = recording.id
+                modified = True
+            if s.created_at:
+                s_dt = s.created_at if s.created_at.tzinfo else s.created_at.replace(tzinfo=timezone.utc)
+                diff = max(0.0, (s_dt - rec_start).total_seconds())
+                s.start_seconds = round(diff, 1)
+                s.end_seconds = round(diff + 3.0, 1)
+                modified = True
+
+        if modified:
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+
+        return sorted(candidates, key=lambda s: s.start_seconds or 0.0)
 
     # Standard live mode: return top newest first
     query = db.query(Subtitle).filter(Subtitle.event_id == event.id)

@@ -59,7 +59,7 @@ export function LivePlayer({
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [activeCaption, setActiveCaption] = useState<string | null>(null);
   const [showCC, setShowCC] = useState<boolean>(true);
-  const [showTranscriptLog, setShowTranscriptLog] = useState<boolean>(false);
+  const [showTranscriptLog, setShowTranscriptLog] = useState<boolean>(true);
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [transcriptSearch, setTranscriptSearch] = useState<string>('');
   const [togglingTranscription, setTogglingTranscription] = useState<boolean>(false);

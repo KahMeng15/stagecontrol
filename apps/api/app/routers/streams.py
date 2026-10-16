@@ -14,6 +14,7 @@ from app.models.enums import EventRole, has_sufficient_role
 from app.models.event import Event
 from app.models.membership import Membership
 from app.models.recording import Recording, VideoMarker
+from app.models.subtitle import Subtitle
 from app.models.settings import SystemSettings
 from app.schemas.recording import (
     MarkerCreate,
@@ -161,6 +162,8 @@ def list_event_recordings(
     # Disk scan for new files
     event_rec_dir = RECORDINGS_DIR / "live" / stream_key
     if event_rec_dir.exists() and event_rec_dir.is_dir():
+        import re
+        from datetime import timedelta
         for file in event_rec_dir.glob("*.mp4"):
             rel_path = f"live/{stream_key}/{file.name}"
             existing = db.query(Recording).filter(
@@ -169,22 +172,54 @@ def list_event_recordings(
             ).first()
 
             mtime = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
-            friendly_title = format_friendly_recording_title(file.stem, mtime)
+            match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', file.stem)
+            if match:
+                dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
+                start_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+            else:
+                start_dt = mtime
 
+            duration = max(0.0, (mtime - start_dt).total_seconds())
+            friendly_title = format_friendly_recording_title(file.stem, start_dt)
+            file_size = file.stat().st_size
+
+            rec_target = None
             if not existing:
-                file_size = file.stat().st_size
                 new_rec = Recording(
                     event_id=event.id,
                     title=friendly_title,
                     filename=rel_path,
                     file_size_bytes=file_size,
-                    duration_seconds=0.0,
+                    duration_seconds=round(duration, 1),
                     status="ready",
-                    created_at=mtime
+                    created_at=start_dt
                 )
                 db.add(new_rec)
-            elif existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
-                existing.title = friendly_title
+                db.flush()
+                rec_target = new_rec
+            else:
+                existing.duration_seconds = round(duration, 1)
+                existing.file_size_bytes = file_size
+                existing.created_at = start_dt
+                if existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
+                    existing.title = friendly_title
+                rec_target = existing
+
+            # Link all subtitles within this recording's time window
+            if rec_target:
+                window_subs = db.query(Subtitle).filter(
+                    Subtitle.event_id == event.id,
+                    Subtitle.created_at >= start_dt - timedelta(seconds=2),
+                    Subtitle.created_at <= mtime + timedelta(seconds=5)
+                ).all()
+                for s in window_subs:
+                    if s.recording_id != rec_target.id:
+                        s.recording_id = rec_target.id
+                    if s.created_at:
+                        s_dt = s.created_at if s.created_at.tzinfo else s.created_at.replace(tzinfo=timezone.utc)
+                        diff = max(0.0, (s_dt - start_dt).total_seconds())
+                        s.start_seconds = round(diff, 1)
+                        s.end_seconds = round(diff + 3.0, 1)
 
         db.commit()
 

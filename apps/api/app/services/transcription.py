@@ -36,12 +36,15 @@ class TranscriptionService:
         """Lazy loads the faster-whisper model on CPU with INT8 quantization."""
         if self.model is None:
             try:
+                import os
                 from faster_whisper import WhisperModel
-                logger.info(f"Loading speech-to-text model: {settings.TRANSCRIPTION_MODEL} (device=cpu, int8)")
+                cpu_threads = min(4, os.cpu_count() or 4)
+                logger.info(f"Loading speech-to-text model: {settings.TRANSCRIPTION_MODEL} (device=cpu, int8, cpu_threads={cpu_threads})")
                 self.model = WhisperModel(
                     settings.TRANSCRIPTION_MODEL,
                     device="cpu",
-                    compute_type="int8"
+                    compute_type="int8",
+                    cpu_threads=cpu_threads
                 )
                 logger.info("Speech-to-text model loaded successfully.")
             except Exception as e:
@@ -114,19 +117,17 @@ class TranscriptionService:
         model = self._get_model()
         results = []
         try:
-            # Balanced bilingual prompt supporting English, Bahasa Melayu, and Manglish code-switching
-            initial_prompt = (
-                "Live stage rehearsal, sound check, cue standby, microphone test. "
-                "Can you hear me? Boleh dengar tak? Jom start now, okay lah, thanks everyone."
-            )
+            # Clean prompt guiding multilingual English and Bahasa Melayu recognition without hallucinating fake cues
+            initial_prompt = "Stage rehearsal, cues, and dialogue in English and Bahasa Melayu."
             segments, info = model.transcribe(
                 audio_data,
                 task="transcribe",
-                language=None,  # Automatically detect language per chunk (transcribe English as English, Malay as Malay)
+                language=None,  # Automatically detect language per chunk
                 initial_prompt=initial_prompt,
                 beam_size=1,  # Fast greedy decoding for low-latency live captions
-                vad_filter=True,
-                vad_parameters=dict(min_silence_duration_ms=400)
+                temperature=0.0,
+                condition_on_previous_text=False,  # Prevents repeating previous text or looping
+                without_timestamps=True,  # Significant speedup since timestamps are managed by the audio chunker
             )
             for seg in segments:
                 text = seg.text.strip()
@@ -143,23 +144,21 @@ class TranscriptionService:
 
     async def _transcription_worker(self, event_id: str, stream_key: str):
         """
-        Background worker that continuously streams audio from MediaMTX via ffmpeg,
-        accumulates ~3-second chunks, transcribes them, stores them in the database,
-        and broadcasts closed captions to all viewers.
+        Background worker using a decoupled producer-consumer queue:
+        - Producer: Continuously reads 16kHz mono PCM from FFmpeg stdout with zero backpressure on MediaMTX.
+        - Consumer: Accumulates speech utterances using voice activity energy detection and transcribes without cutting words in half.
         """
         rtmp_url = f"{settings.MEDIAMTX_RTMP_URL}/live/{stream_key}"
-        hls_url = f"{settings.MEDIAMTX_HLS_URL}/live/{stream_key}/index.m3u8"
         
         # Audio specs: 16kHz, 16-bit mono PCM = 32,000 bytes/sec
         SAMPLE_RATE = 16000
-        BYTES_PER_SEC = SAMPLE_RATE * 2  # 16-bit = 2 bytes
-        CHUNK_DURATION = 3.0             # 3 seconds per segment
-        CHUNK_BYTES = int(BYTES_PER_SEC * CHUNK_DURATION)
+        BYTES_PER_SEC = SAMPLE_RATE * 2  # 32,000 bytes/sec
+        MIN_UTTERANCE_BYTES = int(BYTES_PER_SEC * 1.5)  # At least 1.5s of speech
+        MAX_UTTERANCE_BYTES = int(BYTES_PER_SEC * 4.0)  # At most 4.0s before forcing a chunk
+        PAUSE_SILENCE_BYTES = int(BYTES_PER_SEC * 0.45) # 0.45s of silence marks end of sentence/phrase
+        ENERGY_THRESHOLD = 0.006                         # RMS energy threshold distinguishing speech from mic noise
 
         logger.info(f"Transcription worker attempting connection to RTMP stream {rtmp_url}")
-
-        # Choose stream source (RTMP preferred, fallback to HLS)
-        input_source = rtmp_url
 
         cmd = [
             "ffmpeg",
@@ -169,7 +168,7 @@ class TranscriptionService:
             "-flags", "low_delay",
             "-probesize", "32768",
             "-analyzeduration", "0",
-            "-i", input_source,
+            "-i", rtmp_url,
             "-vn",
             "-acodec", "pcm_s16le",
             "-ar", str(SAMPLE_RATE),
@@ -179,7 +178,8 @@ class TranscriptionService:
         ]
 
         proc = None
-        stream_elapsed = 0.0
+        audio_queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=120)
+        reader_task = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -189,46 +189,89 @@ class TranscriptionService:
             )
             self.active_processes[event_id] = proc
 
+            async def _audio_producer():
+                """Continuously drains FFmpeg stdout into audio_queue so FFmpeg never blocks."""
+                try:
+                    while True:
+                        block = await proc.stdout.read(4096)
+                        if not block:
+                            break
+                        # If queue is full (consumer lagged momentarily), drop oldest block to preserve live stream
+                        if audio_queue.full():
+                            try:
+                                audio_queue.get_nowait()
+                            except asyncio.QueueEmpty:
+                                pass
+                        await audio_queue.put(block)
+                except asyncio.CancelledError:
+                    pass
+                except Exception as err:
+                    logger.debug(f"Audio producer exception: {err}")
+                finally:
+                    await audio_queue.put(None)
+
+            reader_task = asyncio.create_task(_audio_producer())
+
             audio_buffer = bytearray()
+            stream_elapsed = 0.0
+            has_speech = False
+            silence_bytes = 0
 
             while True:
-                # Read incoming audio in 4KB blocks
-                chunk = await proc.stdout.read(4096)
-                if not chunk:
-                    # FFmpeg process ended or stream closed
-                    logger.info(f"FFmpeg stream closed for event {event_id}")
+                block = await audio_queue.get()
+                if block is None:
+                    # Stream ended
+                    logger.info(f"FFmpeg stream finished for event {event_id}")
                     break
 
-                audio_buffer.extend(chunk)
+                audio_buffer.extend(block)
 
-                # Lag protection: if worker takes longer or stream stuttered,
-                # discard stale audio beyond 1 chunk so captions never fall behind live
-                if len(audio_buffer) > CHUNK_BYTES * 2:
-                    audio_buffer = audio_buffer[-CHUNK_BYTES:]
+                # Evaluate RMS of the newly arrived block to determine speech vs silence
+                block_np = np.frombuffer(block, dtype=np.int16).astype(np.float32) / 32768.0
+                block_rms = float(np.sqrt(np.mean(block_np**2))) if len(block_np) > 0 else 0.0
 
-                if len(audio_buffer) >= CHUNK_BYTES:
-                    # Extract the chunk
-                    raw_audio = bytes(audio_buffer[:CHUNK_BYTES])
-                    # Keep slight overlap (0.5s = 16000 bytes) for word boundary continuity
-                    overlap_bytes = int(BYTES_PER_SEC * 0.5)
-                    audio_buffer = audio_buffer[CHUNK_BYTES - overlap_bytes:]
+                if block_rms >= ENERGY_THRESHOLD:
+                    has_speech = True
+                    silence_bytes = 0
+                else:
+                    silence_bytes += len(block)
 
-                    # Convert raw 16-bit PCM bytes to numpy float32 [-1.0, 1.0]
+                # Check if we should trigger transcription
+                should_transcribe = False
+                trigger_reason = ""
+
+                if has_speech and silence_bytes >= PAUSE_SILENCE_BYTES and len(audio_buffer) >= MIN_UTTERANCE_BYTES:
+                    # Natural pause after a spoken phrase
+                    should_transcribe = True
+                    trigger_reason = "pause"
+                elif has_speech and len(audio_buffer) >= MAX_UTTERANCE_BYTES:
+                    # Continuous speech reached max duration
+                    should_transcribe = True
+                    trigger_reason = "max_len"
+                elif not has_speech and len(audio_buffer) >= int(BYTES_PER_SEC * 1.5):
+                    # Pure silence / background noise: discard to conserve CPU and advance clock
+                    dropped_sec = len(audio_buffer) / BYTES_PER_SEC
+                    stream_elapsed += dropped_sec
+                    audio_buffer.clear()
+                    silence_bytes = 0
+                    continue
+
+                if should_transcribe:
+                    raw_audio = bytes(audio_buffer)
+                    audio_buffer.clear()
+                    has_speech = False
+                    silence_bytes = 0
+
+                    duration_sec = len(raw_audio) / BYTES_PER_SEC
                     audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
 
-                    # Calculate RMS energy to skip dead silence and conserve CPU
-                    rms = np.sqrt(np.mean(audio_np**2))
-                    if rms < 0.003:
-                        stream_elapsed += (CHUNK_DURATION - 0.5)
-                        continue
-
-                    # Run inference in worker thread
+                    # Run inference in background thread
                     results = await asyncio.to_thread(self._transcribe_chunk_sync, audio_np)
 
                     now = datetime.now(timezone.utc)
                     start_sec = round(stream_elapsed, 1)
-                    end_sec = round(stream_elapsed + CHUNK_DURATION, 1)
-                    stream_elapsed += (CHUNK_DURATION - 0.5)
+                    end_sec = round(stream_elapsed + duration_sec, 1)
+                    stream_elapsed += duration_sec
 
                     if results:
                         combined_text = " ".join(r["text"] for r in results).strip()
@@ -236,23 +279,53 @@ class TranscriptionService:
                             # Save to Database
                             db: Session = SessionLocal()
                             try:
+                                import re
+                                from pathlib import Path
                                 from app.models.recording import Recording
-                                active_rec = (
-                                    db.query(Recording)
-                                    .filter(Recording.event_id == event_id, Recording.status.in_(["recording", "ready"]))
-                                    .order_by(Recording.created_at.desc())
-                                    .first()
-                                )
+
                                 sub_rec_id = None
-                                if active_rec:
-                                    rec_start = active_rec.created_at
-                                    if rec_start.tzinfo is None:
-                                        rec_start = rec_start.replace(tzinfo=timezone.utc)
-                                    diff = (now - rec_start).total_seconds()
-                                    if 0 <= diff <= (active_rec.duration_seconds + 30 if active_rec.duration_seconds > 0 else 7200):
-                                        sub_rec_id = active_rec.id
-                                        start_sec = round(diff, 1)
-                                        end_sec = round(diff + CHUNK_DURATION, 1)
+                                # Check if there is an active recording file currently on disk
+                                rec_dirs = [Path("/storage/recordings/live") / stream_key, Path("storage/recordings/live") / stream_key]
+                                for rd in rec_dirs:
+                                    if rd.exists():
+                                        files = sorted(rd.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                                        if files:
+                                            latest = files[0]
+                                            # If touched within last 45s, this is the active take being recorded
+                                            if (time.time() - latest.stat().st_mtime) < 45.0:
+                                                rel_path = f"live/{stream_key}/{latest.name}"
+                                                active_rec = db.query(Recording).filter(
+                                                    Recording.event_id == event_id,
+                                                    Recording.filename == rel_path
+                                                ).first()
+
+                                                match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', latest.stem)
+                                                if match:
+                                                    dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
+                                                    start_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                                                else:
+                                                    start_dt = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+
+                                                if not active_rec:
+                                                    friendly_title = f"{start_dt.strftime('%I:%M:%S %p').lower()} {start_dt.day} {start_dt.strftime('%b %Y')}"
+                                                    active_rec = Recording(
+                                                        event_id=event_id,
+                                                        title=friendly_title,
+                                                        filename=rel_path,
+                                                        file_size_bytes=latest.stat().st_size,
+                                                        duration_seconds=0.0,
+                                                        status="recording",
+                                                        created_at=start_dt
+                                                    )
+                                                    db.add(active_rec)
+                                                    db.commit()
+                                                    db.refresh(active_rec)
+
+                                                sub_rec_id = active_rec.id
+                                                diff = max(0.0, (now - start_dt).total_seconds())
+                                                start_sec = round(diff, 1)
+                                                end_sec = round(diff + duration_sec, 1)
+                                                break
 
                                 sub = Subtitle(
                                     id=str(uuid.uuid4()),
@@ -290,13 +363,15 @@ class TranscriptionService:
                                 "created_at": now.isoformat()
                             }
                             await self.broadcast_subtitle(event_id, payload)
-                            logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s): {combined_text}")
+                            logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s, {trigger_reason}): {combined_text}")
 
         except asyncio.CancelledError:
             logger.info(f"Transcription worker cancelled for event {event_id}")
         except Exception as e:
             logger.error(f"Error in transcription worker for event {event_id}: {e}", exc_info=True)
         finally:
+            if reader_task:
+                reader_task.cancel()
             if proc:
                 try:
                     proc.kill()

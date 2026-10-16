@@ -40,8 +40,8 @@ class Settings(BaseSettings):
     MEDIAMTX_WEBRTC_URL: str = "http://localhost:8889"
     MEDIAMTX_RTMP_URL: str = "rtmp://localhost:1935"
 
-    # Malaysian Whisper speech-to-text configuration
-    TRANSCRIPTION_MODEL: str = "SeamlessX/malaysian-faster-whisper-small-v3-ct2"
+    # Whisper speech-to-text configuration (tiny is fast and CPU-friendly with ~1s latency)
+    TRANSCRIPTION_MODEL: str = "tiny"
     TRANSCRIPTION_AUTO_START: bool = True
 
     model_config = SettingsConfigDict(

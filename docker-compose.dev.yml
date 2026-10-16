@@ -16,6 +16,7 @@ services:
       - MEDIAMTX_HLS_URL=http://localhost:8888
       - MEDIAMTX_WEBRTC_URL=http://localhost:8889
       - MEDIAMTX_RTMP_URL=rtmp://mediamtx:1935
+      - TRANSCRIPTION_MODEL=tiny
     volumes:
       # Live-mount backend python code for instant Uvicorn hot reloading
       - ./apps/api/app:/app/app
