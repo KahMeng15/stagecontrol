@@ -392,6 +392,12 @@ class TranscriptionService:
                             await self.broadcast_subtitle(event_id, payload)
                             logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s, {trigger_reason}): {combined_text}")
 
+                            # Auto-sync live speech with event's active script
+                            try:
+                                await self._match_and_sync_script(event_id, combined_text)
+                            except Exception as sync_err:
+                                logger.warning(f"Script sync check failed: {sync_err}")
+
         except asyncio.CancelledError:
             logger.info(f"Transcription worker cancelled for event {event_id}")
         except Exception as e:
@@ -408,6 +414,77 @@ class TranscriptionService:
             self.active_processes.pop(event_id, None)
             self.active_tasks.pop(event_id, None)
             logger.info(f"Transcription worker cleanly exited for event {event_id}")
+
+    async def _match_and_sync_script(self, event_id: str, spoken_text: str):
+        """
+        Fuzzy matches speech against event's active script blocks with ~75-80% wildcard tolerance.
+        If matched, updates current active block and broadcasts 'script_sync' to all connected crew.
+        """
+        try:
+            from app.models.script import Script
+            from app.services.script_parser import match_spoken_text_to_script
+            from app.routers.scripts import event_active_blocks, event_last_script_match_time
+
+            db: Session = SessionLocal()
+            try:
+                active_script = db.query(Script).filter(
+                    Script.event_id == event_id,
+                    Script.is_active == 1
+                ).order_by(Script.version.desc()).first()
+
+                if not active_script:
+                    return
+
+                blocks = []
+                for sec in active_script.sections:
+                    blocks.extend(sec.blocks)
+
+                if not blocks:
+                    return
+
+                curr_block_id = event_active_blocks.get(event_id)
+                curr_idx = None
+                if curr_block_id:
+                    for b in blocks:
+                        if b.id == curr_block_id:
+                            curr_idx = b.order_index
+                            break
+
+                now = time.time()
+                last_time = event_last_script_match_time.get(event_id, 0.0)
+                time_since = (now - last_time) if last_time > 0 else 999.0
+
+                matched_block, confidence = match_spoken_text_to_script(
+                    blocks=blocks,
+                    spoken_text=spoken_text,
+                    current_block_index=curr_idx,
+                    time_since_last_match=time_since,
+                    threshold=0.62,
+                    local_window_size=5,
+                    global_search_delay_seconds=3.0
+                )
+
+                if matched_block:
+                    event_active_blocks[event_id] = matched_block.id
+                    event_last_script_match_time[event_id] = now
+                    sync_payload = {
+                        "type": "script_sync",
+                        "event_id": event_id,
+                        "block_id": matched_block.id,
+                        "section_id": matched_block.section_id,
+                        "order_index": matched_block.order_index,
+                        "speaker": matched_block.speaker,
+                        "cue": matched_block.cue,
+                        "dialogue": matched_block.dialogue,
+                        "spoken_text": spoken_text,
+                        "confidence": round(confidence, 2)
+                    }
+                    await self.broadcast_subtitle(event_id, sync_payload)
+                    logger.info(f"[{event_id[:8]}] Script Auto-Synced to line {matched_block.order_index} ({matched_block.speaker}): {matched_block.dialogue[:50]}... (conf: {confidence:.2f})")
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error(f"Error in script sync: {e}", exc_info=True)
 
     async def start_monitor(self):
         """Starts the background loop that monitors MediaMTX active streams and triggers transcription."""

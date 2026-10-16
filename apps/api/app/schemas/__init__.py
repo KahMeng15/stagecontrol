@@ -12,6 +12,15 @@ from app.schemas.event import (
     GuestAuthResponse,
 )
 
+from app.schemas.script import (
+    ScriptBlockBase,
+    ScriptBlockResponse,
+    ScriptSectionResponse,
+    ScriptResponse,
+    ScriptTextImportRequest,
+    ScriptJumpRequest,
+)
+
 __all__ = [
     "UserBase",
     "UserCreate",
@@ -31,4 +40,10 @@ __all__ = [
     "PublicEventInfo",
     "GuestPinLogin",
     "GuestAuthResponse",
+    "ScriptBlockBase",
+    "ScriptBlockResponse",
+    "ScriptSectionResponse",
+    "ScriptResponse",
+    "ScriptTextImportRequest",
+    "ScriptJumpRequest",
 ]

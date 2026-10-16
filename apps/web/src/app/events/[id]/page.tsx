@@ -8,6 +8,7 @@ import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
+import ScriptTracker from '@/components/script/ScriptTracker';
 import {
   Radio,
   Users,
@@ -46,7 +47,7 @@ function EventContent() {
   const [selectedDomainType, setSelectedDomainType] = useState<'primary' | 'alternative'>('primary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'control' | 'stream' | 'recordings' | 'crew'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'script' | 'recordings' | 'stream' | 'crew'>('control');
 
   // Copy state
   const [copiedKey, setCopiedKey] = useState(false);
@@ -340,6 +341,18 @@ function EventContent() {
             </button>
 
             <button
+              onClick={() => setActiveTab('script')}
+              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
+                activeTab === 'script'
+                  ? 'border-purple-500 text-purple-400'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileText className="w-4 h-4" />
+              <span>Live Script & Cues</span>
+            </button>
+
+            <button
               onClick={() => setActiveTab('recordings')}
               className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
                 activeTab === 'recordings'
@@ -432,26 +445,19 @@ function EventContent() {
               </div>
             </div>
 
-            {/* Script & Cue Tracker View (Prepared for Milestone 3) */}
-            <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-purple-400" />
-                  <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
-                    Live Script & Cue Tracker
-                  </span>
-                </div>
-                <span className="text-xs text-slate-400">Milestone 3 Synchronized Script</span>
-              </div>
+            {/* Live Script & Cue Tracker */}
+            <ScriptTracker eventId={event.id} isSMOrAdmin={isSMOrAdmin} />
+          </div>
+        )}
 
-              <div className="py-12 text-center border border-dashed border-[#1e2638] rounded-xl">
-                <FileText className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-                <h4 className="text-sm font-medium text-slate-300">No script loaded</h4>
-                <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                  Import DOCX or text script in Milestone 3 to enable live line-by-line stage advancement and presenter teleprompter mode.
-                </p>
-              </div>
-            </div>
+        {/* Dedicated Live Script & Cues Tab */}
+        {activeTab === 'script' && (
+          <div className="space-y-6">
+            <ScriptTracker
+              eventId={event.id}
+              isSMOrAdmin={isSMOrAdmin}
+              className="min-h-[700px]"
+            />
           </div>
         )}
 

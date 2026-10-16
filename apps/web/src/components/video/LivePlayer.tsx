@@ -25,7 +25,7 @@ import {
   Search,
   ArrowDown,
 } from 'lucide-react';
-import { api, API_BASE, StreamStatus, VideoMarker, SubtitleItem } from '@/lib/api';
+import { api, API_BASE, getWebSocketUrl, StreamStatus, VideoMarker, SubtitleItem } from '@/lib/api';
 
 interface LivePlayerProps {
   eventId: string;
@@ -123,12 +123,8 @@ export function LivePlayer({
     const connectWebSocket = () => {
       if (isDisposed) return;
       try {
-        const token = api.getToken() || '';
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        // In local development, Next.js runs on 3000 while FastAPI runs on 8000
-        const host = window.location.hostname;
-        const port = window.location.port === '3000' ? '8000' : window.location.port;
-        const wsUrl = `${wsProtocol}//${host}${port ? `:${port}` : ''}/api/events/${eventId}/subtitles/ws?token=${token}`;
+        const wsUrl = getWebSocketUrl(`/api/events/${eventId}/subtitles/ws`);
+        if (!wsUrl) return;
 
         ws = new WebSocket(wsUrl);
         wsRef.current = ws;

@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 import app.models  # noqa: F401
-from app.routers import auth, events, settings as settings_router, streams, subtitles
+from app.routers import auth, events, scripts, settings as settings_router, streams, subtitles
 from app.services.transcription import transcription_service
 
 import logging
@@ -56,6 +56,7 @@ app.add_middleware(
 # Mount API Routers
 app.include_router(auth.router, prefix=settings.API_V1_STR)
 app.include_router(events.router, prefix=settings.API_V1_STR)
+app.include_router(scripts.router, prefix=settings.API_V1_STR)
 app.include_router(streams.router, prefix=settings.API_V1_STR)
 app.include_router(subtitles.router, prefix=settings.API_V1_STR)
 app.include_router(settings_router.router, prefix=settings.API_V1_STR)
