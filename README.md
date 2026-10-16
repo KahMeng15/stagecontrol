@@ -57,12 +57,23 @@ Web Application will be available at [http://localhost:3000](http://localhost:30
 
 ---
 
-### Option B: Run with Docker Compose
+### Option B: Docker with Hot Reloading (Development)
+
+Run all services with instant hot-reloading for both FastAPI and Next.js:
+```bash
+docker compose -f docker-compose.dev.yml up --build
+```
+- Edit Python files in `apps/api/app` → Uvicorn reloads automatically.
+- Edit React/TSX files in `apps/web/src` → Fast Refresh updates the browser instantly.
+
+---
+
+### Option C: Production Docker Deployment
 
 ```bash
-docker compose up --build
+docker compose up -d --build
 ```
-This boots:
+This boots optimized production builds:
 - Web UI on `http://localhost:3000`
 - API on `http://localhost:8000`
 - MediaMTX RTMP on `rtmp://localhost:1935/live`

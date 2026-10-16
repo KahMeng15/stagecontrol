@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile.dev
+    container_name: stagecontrol-api-dev
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite:////storage/db/stageflow.db
+      - SECRET_KEY=stagecontrol-super-secure-dev-secret-key-change-in-prod-2026
+      - MEDIAMTX_API_URL=http://mediamtx:9997
+      - MEDIAMTX_HLS_URL=http://localhost:8888
+      - MEDIAMTX_WEBRTC_URL=http://localhost:8889
+    volumes:
+      # Live-mount backend python code for instant Uvicorn hot reloading
+      - ./apps/api/app:/app/app
+      - ./storage:/storage
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile.dev
+    container_name: stagecontrol-web-dev
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - WATCHPACK_POLLING=true
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    volumes:
+      # Live-mount frontend code for React Fast Refresh
+      - ./apps/web:/app
+      # Isolate node_modules and .next inside container from macOS host
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    command: ["npm", "run", "dev", "--", "-H", "0.0.0.0"]
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: stagecontrol-mediamtx-dev
+    restart: unless-stopped
+    ports:
+      - "1935:1935"   # RTMP (OBS stream ingest)
+      - "8888:8888"   # HLS stream & playback
+      - "8889:8889"   # WebRTC player & WHIP ingest
+      - "9997:9997"   # Management API
+    volumes:
+      - ./services/mediamtx/mediamtx.yml:/mediamtx.yml:ro
+      - ./storage/recordings:/recordings
