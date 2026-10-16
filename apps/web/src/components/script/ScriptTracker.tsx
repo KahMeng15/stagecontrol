@@ -25,6 +25,18 @@ import {
   Volume2,
 } from 'lucide-react';
 import { api, getWebSocketUrl, ScriptItem, ScriptBlock, ScriptSection, SubtitleItem } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface ScriptTrackerProps {
   eventId: string;
@@ -695,28 +707,28 @@ export default function ScriptTracker({
 
   return (
     <div
-      className={`bg-[#11141f] border border-[#1e2638] rounded-2xl flex flex-col shadow-xl overflow-hidden ${
-        teleprompterMode ? 'fixed inset-4 z-50 bg-[#090b10] border-blue-500/50' : className
+      className={`bg-card border border-border/60 rounded-2xl flex flex-col shadow-xl overflow-hidden text-card-foreground ${
+        teleprompterMode ? 'fixed inset-4 z-50 bg-background border-primary/50' : className
       }`}
     >
       {/* Header Bar */}
-      <div className="p-4 border-b border-[#1e2638] bg-[#0c0e16] flex flex-wrap items-center justify-between gap-3">
+      <div className="p-4 border-b border-border/60 bg-muted/30 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-purple-600/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
+          <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
             <FileText className="w-5 h-5" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-slate-100">
+              <h3 className="text-sm font-bold text-foreground">
                 {script ? script.title : 'Live Script & Cue Tracker'}
               </h3>
               {script && (
-                <span className="text-[10px] bg-purple-500/20 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full font-mono font-semibold">
+                <Badge variant="secondary" className="font-mono text-[10px]">
                   v{script.version} • {script.total_blocks} lines
-                </span>
+                </Badge>
               )}
             </div>
-            <p className="text-[11px] text-slate-400 flex items-center gap-1.5 mt-0.5">
+            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
               <span>Speech-to-Script Wildcard Sync (~{wildcardThreshold}% tolerance)</span>
               {lastConfidence && (
                 <span className="text-emerald-400 font-mono font-medium">
@@ -730,88 +742,85 @@ export default function ScriptTracker({
         {/* Action Controls */}
         <div className="flex items-center gap-2">
           {/* Auto-Follow Toggle */}
-          <button
+          <Button
+            size="sm"
+            variant={autoFollow ? 'default' : 'outline'}
             onClick={() => setAutoFollow(!autoFollow)}
-            className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
-              autoFollow
-                ? 'bg-blue-600/20 border-blue-500/40 text-blue-300'
-                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
+            className="gap-1.5 text-xs h-8"
             title={autoFollow ? 'Auto-scroll enabled' : 'Auto-scroll paused'}
           >
             {autoFollow ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">Auto-Follow</span>
-          </button>
+          </Button>
 
           {/* AI Speech Sync Toggle */}
-          <button
+          <Button
+            size="sm"
+            variant={speechSyncEnabled ? 'default' : 'outline'}
             onClick={() => setSpeechSyncEnabled(!speechSyncEnabled)}
-            className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border flex items-center gap-1.5 transition-colors ${
-              speechSyncEnabled
-                ? 'bg-emerald-600/20 border-emerald-500/40 text-emerald-300'
-                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
+            className="gap-1.5 text-xs h-8"
             title="Toggle Live Speech-to-Script Auto-Sync"
           >
             <Sparkles className={`w-3.5 h-3.5 ${speechSyncEnabled ? 'animate-pulse text-emerald-400' : ''}`} />
             <span className="hidden sm:inline">{speechSyncEnabled ? 'AI Sync Active' : 'AI Sync Off'}</span>
-          </button>
+          </Button>
 
           {/* Teleprompter Fullscreen Mode */}
-          <button
+          <Button
+            size="icon-sm"
+            variant={teleprompterMode ? 'default' : 'outline'}
             onClick={() => setTeleprompterMode(!teleprompterMode)}
-            className={`p-1.5 rounded-xl border transition-colors ${
-              teleprompterMode
-                ? 'bg-purple-600 border-purple-500 text-white'
-                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-slate-200'
-            }`}
             title={teleprompterMode ? 'Exit Fullscreen Teleprompter' : 'Presenter / Teleprompter Mode'}
           >
             {teleprompterMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </button>
+          </Button>
 
           {/* Import Button */}
           {isSMOrAdmin && (
-            <button
+            <Button
+              size="sm"
+              variant="secondary"
               onClick={() => setIsImportModalOpen(true)}
-              className="px-3 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-md shadow-purple-600/20 transition-all"
+              className="gap-1.5 text-xs h-8"
             >
-              <Upload className="w-3.5 h-3.5" />
+              <Upload className="w-3.5 h-3.5 text-primary" />
               <span>Import Script</span>
-            </button>
+            </Button>
           )}
 
           {/* Delete Script */}
           {script && isSMOrAdmin && (
-            <button
+            <Button
+              size="icon-sm"
+              variant="ghost"
               onClick={handleDeleteScript}
-              className="p-1.5 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-colors"
+              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
               title="Delete active script"
             >
               <Trash2 className="w-4 h-4" />
-            </button>
+            </Button>
           )}
         </div>
       </div>
 
       {/* Filter & Sensitivity Controls Sub-bar */}
       {script && (
-        <div className="px-4 py-2 bg-[#090b10] border-b border-[#1e2638] flex flex-wrap items-center justify-between gap-3 text-xs">
+        <div className="px-4 py-2 bg-muted/15 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 flex-1 max-w-md">
             {/* Search */}
             <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-              <input
+              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
                 type="text"
                 placeholder="Search lines, speakers, or cues..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full bg-[#11141f] border border-[#1e2638] rounded-lg pl-8 pr-3 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-purple-500 transition-colors"
+                className="pl-8 text-xs h-8"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X className="w-3 h-3" />
                 </button>
@@ -823,11 +832,11 @@ export default function ScriptTracker({
               <select
                 value={selectedSectionId}
                 onChange={(e) => setSelectedSectionId(e.target.value)}
-                className="bg-[#11141f] border border-[#1e2638] rounded-lg px-2.5 py-1 text-xs text-slate-300 focus:outline-none focus:border-purple-500"
+                className="rounded-lg border border-input bg-transparent px-2.5 py-1 text-xs text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none h-8"
               >
-                <option value="all">All Scenes ({script.sections.length})</option>
+                <option value="all" className="bg-popover text-popover-foreground">All Scenes ({script.sections.length})</option>
                 {script.sections.map((sec) => (
-                  <option key={sec.id} value={sec.id}>
+                  <option key={sec.id} value={sec.id} className="bg-popover text-popover-foreground">
                     {sec.title} ({sec.blocks.length})
                   </option>
                 ))}
@@ -954,9 +963,9 @@ export default function ScriptTracker({
 
       {/* Table Header Bar for Column Titles (Continuous Stage Cue Layout) */}
       {script && displayBlocks.length > 0 && (
-        <div className="flex items-center px-3 py-1.5 bg-[#090c12] border-b border-[#1e2638] text-[11px] font-bold text-slate-400 uppercase tracking-wider select-none shrink-0 sticky top-0 z-10">
+        <div className="flex items-center px-3 py-1.5 bg-muted/40 border-b border-border/60 text-[11px] font-bold text-muted-foreground uppercase tracking-wider select-none shrink-0 sticky top-0 z-10">
           <div className="w-28 sm:w-36 lg:w-44 shrink-0 flex items-center gap-1.5 pr-2">
-            <span className="w-5 text-slate-500">#</span>
+            <span className="w-5 text-muted-foreground/60">#</span>
             <span>Speaker</span>
           </div>
           <div className="flex-1 min-w-0 pr-4">Dialogue</div>
@@ -967,7 +976,7 @@ export default function ScriptTracker({
       {/* Script Lines Content Container (Continuous List, No Gaps) */}
       <div
         ref={listContainerRef}
-        className={`relative flex-1 overflow-y-auto divide-y divide-[#1e2638]/70 bg-[#0b0e17] ${
+        className={`relative flex-1 overflow-y-auto divide-y divide-border/40 bg-card ${
           teleprompterMode ? 'max-h-full' : 'max-h-[550px]'
         }`}
       >
@@ -1001,7 +1010,7 @@ export default function ScriptTracker({
           </div>
         ) : displayBlocks.length === 0 ? (
           <div className="py-12 text-center text-slate-400 text-xs">
-            No lines match your search filter "{searchQuery}".
+            No lines match your search filter &quot;{searchQuery}&quot;.
           </div>
         ) : (
           displayBlocks.map((block) => {
@@ -1114,202 +1123,183 @@ export default function ScriptTracker({
         </div>
       )}
 
-      {/* Script Import Modal */}
-      {isImportModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
-            <button
-              onClick={() => setIsImportModalOpen(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1a2030]"
+      {/* Script Import Dialog using shadcn/ui */}
+      <Dialog open={isImportModalOpen} onOpenChange={setIsImportModalOpen}>
+        <DialogContent className="sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2.5">
+              <Upload className="w-5 h-5 text-purple-400" />
+              <span>Import Stage Script</span>
+            </DialogTitle>
+            <DialogDescription>
+              Import a Word (.docx) 3-column table or paste raw script text to enable synchronized speech following.
+            </DialogDescription>
+          </DialogHeader>
+
+          {/* Modal Tabs */}
+          <div className="flex items-center gap-2 border-b border-border/50 pb-3">
+            <Button
+              type="button"
+              size="sm"
+              variant={importTab === 'file' ? 'default' : 'ghost'}
+              onClick={() => setImportTab('file')}
             >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-3 mb-5">
-              <div className="w-10 h-10 rounded-xl bg-purple-600/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                <Upload className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-base font-bold text-slate-100">Import Stage Script</h3>
-                <p className="text-xs text-slate-400">
-                  Import Word table (.docx) or paste raw text to enable synchronized tracking.
-                </p>
-              </div>
-            </div>
-
-            {/* Modal Tabs */}
-            <div className="flex items-center gap-2 border-b border-[#1e2638] pb-3 mb-4">
-              <button
-                type="button"
-                onClick={() => setImportTab('file')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
-                  importTab === 'file'
-                    ? 'bg-purple-600 text-white'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Upload Word (.docx) / File
-              </button>
-              <button
-                type="button"
-                onClick={() => setImportTab('text')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-semibold transition-colors ${
-                  importTab === 'text'
-                    ? 'bg-purple-600 text-white'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Paste Raw Text / TSV
-              </button>
-            </div>
-
-            {importError && (
-              <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>{importError}</span>
-              </div>
-            )}
-
-            {/* Tab 1: File Upload */}
-            {importTab === 'file' && (
-              <form onSubmit={handleUploadFile} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Script Title <span className="text-slate-500 font-normal">(optional)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={importTitle}
-                    onChange={(e) => setImportTitle(e.target.value)}
-                    placeholder="e.g. Stage Script (defaults to filename if blank)"
-                    className="w-full bg-[#090b10] border border-[#1e2638] rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Word File (.docx) or Text Script (.txt, .tsv)
-                  </label>
-                  <div className="border-2 border-dashed border-[#1e2638] rounded-xl p-6 text-center hover:border-purple-500/50 transition-colors">
-                    <input
-                      type="file"
-                      id="script-file-upload"
-                      accept=".docx,.doc,.txt,.tsv,.csv"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        setImportFile(file);
-                        if (file && !importTitle) {
-                          setImportTitle(file.name.replace(/\.[^/.]+$/, ''));
-                        }
-                      }}
-                      className="hidden"
-                    />
-                    <label
-                      htmlFor="script-file-upload"
-                      className="cursor-pointer flex flex-col items-center justify-center gap-2"
-                    >
-                      <FileCheck className="w-8 h-8 text-purple-400" />
-                      <span className="text-xs text-slate-200 font-medium">
-                        {importFile ? importFile.name : 'Click to select Word (.docx) file'}
-                      </span>
-                      <span className="text-[11px] text-slate-500">
-                        Supports 3-column stage tables (Speaker, Technical Notes, Dialogue Lines)
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsImportModalOpen(false)}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!importFile || isImporting}
-                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5"
-                  >
-                    {isImporting ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Parsing Document...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Upload className="w-3.5 h-3.5" />
-                        <span>Upload & Parse</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            )}
-
-            {/* Tab 2: Raw Text Paste */}
-            {importTab === 'text' && (
-              <form onSubmit={handleImportRawText} className="space-y-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Script Title
-                  </label>
-                  <input
-                    type="text"
-                    value={importTitle}
-                    onChange={(e) => setImportTitle(e.target.value)}
-                    placeholder="e.g. Rehearsal Script"
-                    className="w-full bg-[#090b10] border border-[#1e2638] rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-purple-500"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    Paste Script Text or TSV Table
-                  </label>
-                  <textarea
-                    rows={8}
-                    value={importText}
-                    onChange={(e) => setImportText(e.target.value)}
-                    placeholder={`Paste here! Supported formats:\n1. Tab-delimited (copy from Excel/Word table): Speaker [tab] Technical Cue [tab] Dialogue\n2. Script dialogue: Speaker: Spoken line [SPOTLIGHT ON EMCEE]\n3. Plain dialogue lines`}
-                    className="w-full bg-[#090b10] border border-[#1e2638] rounded-xl p-3 text-xs font-mono text-slate-200 focus:outline-none focus:border-purple-500"
-                    required
-                  />
-                </div>
-
-                <div className="flex items-center justify-end gap-3 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsImportModalOpen(false)}
-                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-semibold"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={!importText.trim() || isImporting}
-                    className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold flex items-center gap-1.5"
-                  >
-                    {isImporting ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Importing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Parse & Save Script</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </form>
-            )}
+              Upload Word (.docx) / File
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={importTab === 'text' ? 'default' : 'ghost'}
+              onClick={() => setImportTab('text')}
+            >
+              Paste Raw Text / TSV
+            </Button>
           </div>
-        </div>
-      )}
+
+          {importError && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{importError}</span>
+            </div>
+          )}
+
+          {/* Tab 1: File Upload */}
+          {importTab === 'file' && (
+            <form onSubmit={handleUploadFile} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                  Script Title <span className="text-muted-foreground font-normal lowercase">(optional)</span>
+                </label>
+                <Input
+                  type="text"
+                  value={importTitle}
+                  onChange={(e) => setImportTitle(e.target.value)}
+                  placeholder="e.g. Stage Script (defaults to filename if blank)"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                  Word File (.docx) or Text Script (.txt, .tsv)
+                </label>
+                <div className="border-2 border-dashed border-border/70 rounded-xl p-6 text-center hover:border-primary/50 transition-colors">
+                  <input
+                    type="file"
+                    id="script-file-upload"
+                    accept=".docx,.doc,.txt,.tsv,.csv"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0] || null;
+                      setImportFile(file);
+                      if (file && !importTitle) {
+                        setImportTitle(file.name.replace(/\.[^/.]+$/, ''));
+                      }
+                    }}
+                    className="hidden"
+                  />
+                  <label
+                    htmlFor="script-file-upload"
+                    className="cursor-pointer flex flex-col items-center justify-center gap-2"
+                  >
+                    <FileCheck className="w-8 h-8 text-purple-400" />
+                    <span className="text-xs text-foreground font-medium">
+                      {importFile ? importFile.name : 'Click to select Word (.docx) file'}
+                    </span>
+                    <span className="text-[11px] text-muted-foreground">
+                      Supports 3-column stage tables (Speaker, Technical Notes, Dialogue Lines)
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsImportModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!importFile || isImporting}
+                  className="gap-1.5"
+                >
+                  {isImporting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Parsing Document...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-3.5 h-3.5" />
+                      <span>Upload & Parse</span>
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+
+          {/* Tab 2: Raw Text Paste */}
+          {importTab === 'text' && (
+            <form onSubmit={handleImportRawText} className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                  Script Title
+                </label>
+                <Input
+                  type="text"
+                  value={importTitle}
+                  onChange={(e) => setImportTitle(e.target.value)}
+                  placeholder="e.g. Rehearsal Script"
+                  required
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                  Paste Script Text or TSV Table
+                </label>
+                <textarea
+                  rows={8}
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  placeholder={`Paste here! Supported formats:\n1. Tab-delimited (copy from Excel/Word table): Speaker [tab] Technical Cue [tab] Dialogue\n2. Script dialogue: Speaker: Spoken line [SPOTLIGHT ON EMCEE]\n3. Plain dialogue lines`}
+                  className="w-full rounded-lg border border-input bg-transparent p-3 text-xs font-mono text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none"
+                  required
+                />
+              </div>
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setIsImportModalOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={!importText.trim() || isImporting}
+                  className="gap-1.5"
+                >
+                  {isImporting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Importing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Parse & Save Script</span>
+                    </>
+                  )}
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

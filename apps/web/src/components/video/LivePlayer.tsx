@@ -26,6 +26,18 @@ import {
   ArrowDown,
 } from 'lucide-react';
 import { api, API_BASE, getWebSocketUrl, StreamStatus, VideoMarker, SubtitleItem } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface LivePlayerProps {
   eventId: string;
@@ -278,61 +290,55 @@ export function LivePlayer({
   return (
     <div
       ref={containerRef}
-      className="bg-[#11141f] border border-[#1e2638] rounded-2xl overflow-hidden flex flex-col relative group shadow-2xl"
+      className="bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col relative group shadow-2xl text-card-foreground"
     >
       {/* Player Header Bar */}
-      <div className="px-4 py-3 border-b border-[#1e2638] flex flex-wrap items-center justify-between gap-3 bg-[#0e111a] z-10">
+      <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-muted/30 z-10">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
-            <Tv className="w-4 h-4 text-blue-400" />
-            <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+            <Tv className="w-4 h-4 text-primary" />
+            <span className="text-xs font-bold text-foreground uppercase tracking-wider">
               Live Program Feed
             </span>
           </div>
 
           {/* Mode Switcher Pill */}
           {isLive && (
-            <div className="flex items-center bg-[#161c2c] p-0.5 rounded-lg border border-[#232d44]">
-              <button
+            <div className="flex items-center bg-muted p-0.5 rounded-lg border border-border/50">
+              <Button
+                size="xs"
+                variant={playerMode === 'hls' ? 'default' : 'ghost'}
                 onClick={() => setPlayerMode('hls')}
-                className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                  playerMode === 'hls'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                className="gap-1 text-[11px]"
                 title="Buffered HLS with full stereo audio & standard encoder compatibility"
               >
                 <Layers className="w-3.5 h-3.5" />
                 <span>HLS (Standard)</span>
-              </button>
+              </Button>
 
-              <button
+              <Button
+                size="xs"
+                variant={playerMode === 'webrtc' ? 'default' : 'ghost'}
                 onClick={() => setPlayerMode('webrtc')}
-                className={`flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                  playerMode === 'webrtc'
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
+                className="gap-1 text-[11px]"
                 title="Ultra-low latency (~200ms). Requires OBS Max B-frames: 0"
               >
                 <Zap className="w-3.5 h-3.5" />
                 <span>WebRTC (Low Latency)</span>
-              </button>
+              </Button>
 
               {/* WebRTC tips toggle */}
               {playerMode === 'webrtc' && (
-                <button
+                <Button
                   type="button"
+                  size="icon-xs"
+                  variant={showBFrameHint ? 'default' : 'ghost'}
                   onClick={() => setShowBFrameHint((prev) => !prev)}
                   title="WebRTC encoder & audio tips"
-                  className={`px-1.5 py-1 text-[11px] rounded transition-colors ${
-                    showBFrameHint
-                      ? 'text-amber-300 bg-amber-500/20'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
+                  className="rounded"
                 >
                   <HelpCircle className="w-3.5 h-3.5" />
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -340,14 +346,12 @@ export function LivePlayer({
 
         <div className="flex items-center gap-2">
           {/* Subtitles / CC Button */}
-          <button
+          <Button
             type="button"
+            size="xs"
+            variant={showCC ? 'default' : 'outline'}
             onClick={() => setShowCC(!showCC)}
-            className={`px-2 py-1 text-[11px] font-bold rounded-lg border flex items-center gap-1.5 transition-all ${
-              showCC
-                ? 'bg-purple-600/20 text-purple-300 border-purple-500/40 shadow-sm'
-                : 'text-slate-400 hover:text-slate-200 border-[#232d44] hover:bg-[#161c2c]'
-            }`}
+            className="gap-1 text-[11px]"
             title={showCC ? 'Hide Subtitles (CC)' : 'Show Live Subtitles (CC)'}
           >
             <Subtitles className="w-3.5 h-3.5" />
@@ -355,97 +359,97 @@ export function LivePlayer({
             {isTranscribing && (
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             )}
-          </button>
+          </Button>
 
           {/* Transcript Feed Drawer Toggle */}
-          <button
+          <Button
             type="button"
+            size="xs"
+            variant={showTranscriptLog ? 'default' : 'outline'}
             onClick={() => {
               setShowTranscriptLog(!showTranscriptLog);
               if (!showTranscriptLog) setShowMarkerLog(false);
             }}
-            className={`px-2.5 py-1 text-xs font-semibold rounded-lg border transition-all flex items-center gap-1.5 ${
-              showTranscriptLog
-                ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
-                : 'bg-[#161c2c] hover:bg-[#202940] text-slate-300 border-[#232d44]'
-            }`}
+            className="gap-1.5 text-xs"
             title="Open Live Transcript & Closed Captions feed"
           >
-            <FileText className="w-3.5 h-3.5 text-purple-400" />
+            <FileText className="w-3.5 h-3.5" />
             <span>Transcript</span>
             {subtitles.length > 0 && (
-              <span className="text-[10px] px-1.5 py-0.2 bg-purple-500/25 text-purple-300 rounded font-mono font-bold">
+              <span className="text-[10px] px-1.5 bg-primary-foreground/20 rounded font-mono font-bold">
                 {subtitles.length}
               </span>
             )}
-          </button>
+          </Button>
 
           {/* Mark Live Moment Button */}
           {isLive && (
-            <button
+            <Button
+              size="xs"
+              variant="secondary"
               onClick={() => setShowMarkModal(true)}
-              className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors shadow-sm"
+              className="gap-1.5 text-[11px]"
               title="Add a chapter / moment mark at current live time"
             >
-              <Flag className="w-3.5 h-3.5 text-purple-400" />
+              <Flag className="w-3.5 h-3.5 text-primary" />
               <span>Mark Moment</span>
-            </button>
+            </Button>
           )}
 
           {/* Toggle Live Marker Log Button */}
           {markers.length > 0 && (
-            <button
+            <Button
+              size="xs"
+              variant={showMarkerLog ? 'default' : 'outline'}
               onClick={() => {
                 setShowMarkerLog((prev) => !prev);
                 if (!showMarkerLog) setShowTranscriptLog(false);
               }}
-              className={`flex items-center gap-1 px-2 py-1 text-[11px] font-semibold rounded-md transition-colors ${
-                showMarkerLog
-                  ? 'bg-purple-600 text-white'
-                  : 'bg-[#161c2c] text-slate-300 hover:text-slate-100 border border-[#232d44]'
-              }`}
+              className="gap-1 text-[11px]"
               title="View live marks & cues"
             >
               <Bookmark className="w-3.5 h-3.5" />
               <span>Marks ({markers.length})</span>
-            </button>
+            </Button>
           )}
 
           {/* Live / Offline Status Badge */}
           {isLive ? (
-            <div className="flex items-center gap-1.5 bg-red-500/20 border border-red-500/40 text-red-400 px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold tracking-wider">
-              <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse-live" />
+            <Badge variant="destructive" className="gap-1.5 font-mono text-[10px] uppercase font-bold tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live" />
               <span>LIVE • REC</span>
-            </div>
+            </Badge>
           ) : (
-            <div className="flex items-center gap-1.5 bg-slate-800 text-slate-400 border border-slate-700 px-2.5 py-0.5 rounded-full text-[10px] font-mono">
-              <span className="w-1.5 h-1.5 rounded-full bg-slate-500" />
+            <Badge variant="secondary" className="gap-1 text-muted-foreground font-mono text-[10px]">
+              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
               <span>OFF AIR</span>
-            </div>
+            </Badge>
           )}
 
           {/* Direct Stream Link in New Window */}
           {currentDirectUrl && (
-            <a
-              href={currentDirectUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <Button
+              asChild
+              variant="ghost"
+              size="icon-xs"
               title="Open stream in clean standalone tab"
-              className="p-1 text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] rounded-md transition-colors"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
-            </a>
+              <a href={currentDirectUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </Button>
           )}
 
           {/* Refresh stream button */}
-          <button
+          <Button
+            variant="ghost"
+            size="icon-xs"
             onClick={fetchStatus}
             disabled={loadingStatus}
             title="Refresh stream status"
-            className="p-1 text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] rounded-md transition-colors"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loadingStatus ? 'animate-spin' : ''}`} />
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -809,100 +813,96 @@ export function LivePlayer({
         </div>
       )}
 
-      {/* Mark Moment Modal */}
-      {showMarkModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-sm bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Flag className="w-4 h-4 text-purple-400" />
-                <h3 className="text-sm font-bold text-slate-100">Mark Live Moment</h3>
-              </div>
-              <button
-                onClick={() => setShowMarkModal(false)}
-                className="text-slate-400 hover:text-slate-200 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
+      {/* Mark Moment Dialog using shadcn/ui */}
+      <Dialog open={showMarkModal} onOpenChange={setShowMarkModal}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flag className="w-4 h-4 text-primary" />
+              <span>Mark Live Moment</span>
+            </DialogTitle>
+            <DialogDescription>
+              Drop a timestamped cue mark into the live production log.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateMarker} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Moment Label / Cue Note *
+              </label>
+              <Input
+                type="text"
+                value={markTitle}
+                onChange={(e) => setMarkTitle(e.target.value)}
+                placeholder="e.g. Act 1 Starts, Mic 2 Issue, Solo"
+                autoFocus
+                required
+              />
             </div>
 
-            <form onSubmit={handleCreateMarker} className="space-y-4">
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Moment Label / Cue Note
-                </label>
-                <input
-                  type="text"
-                  value={markTitle}
-                  onChange={(e) => setMarkTitle(e.target.value)}
-                  placeholder="e.g. Act 1 Starts, Mic 2 Issue, Solo"
-                  className="w-full px-3 py-2 text-xs bg-[#0b0e17] border border-[#1e2638] focus:border-purple-500 rounded-xl text-slate-100 outline-none"
-                  autoFocus
-                  required
-                />
+            {/* Quick Preset Buttons */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">Quick Presets</label>
+              <div className="flex flex-wrap gap-1.5">
+                {['Act 1 Begins', 'Act 2 Begins', 'Intermission', 'Key Cue', 'Issue / Glitch', 'Finale'].map((preset) => (
+                  <Button
+                    type="button"
+                    key={preset}
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setMarkTitle(preset)}
+                    className="text-[10px]"
+                  >
+                    {preset}
+                  </Button>
+                ))}
               </div>
+            </div>
 
-              {/* Quick Preset Buttons */}
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1.5">Quick Presets</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {['Act 1 Begins', 'Act 2 Begins', 'Intermission', 'Key Cue', 'Issue / Glitch', 'Finale'].map((preset) => (
-                    <button
-                      type="button"
-                      key={preset}
-                      onClick={() => setMarkTitle(preset)}
-                      className="text-[10px] px-2 py-0.5 rounded-md bg-[#161c2c] hover:bg-[#202940] text-slate-300 border border-[#232d44] transition-colors"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
+            {/* Color selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">Marker Color</label>
+              <div className="flex items-center gap-2">
+                {[
+                  { id: 'purple', bg: 'bg-purple-500' },
+                  { id: 'blue', bg: 'bg-blue-500' },
+                  { id: 'emerald', bg: 'bg-emerald-500' },
+                  { id: 'amber', bg: 'bg-amber-500' },
+                  { id: 'rose', bg: 'bg-rose-500' },
+                ].map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onClick={() => setMarkColor(c.id)}
+                    className={`w-6 h-6 rounded-full ${c.bg} transition-transform ${
+                      markColor === c.id ? 'ring-2 ring-foreground scale-110' : 'opacity-60 hover:opacity-100'
+                    }`}
+                  />
+                ))}
               </div>
+            </div>
 
-              {/* Color selector */}
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1.5">Marker Color</label>
-                <div className="flex items-center gap-2">
-                  {[
-                    { id: 'purple', bg: 'bg-purple-500' },
-                    { id: 'blue', bg: 'bg-blue-500' },
-                    { id: 'emerald', bg: 'bg-emerald-500' },
-                    { id: 'amber', bg: 'bg-amber-500' },
-                    { id: 'rose', bg: 'bg-rose-500' },
-                  ].map((c) => (
-                    <button
-                      type="button"
-                      key={c.id}
-                      onClick={() => setMarkColor(c.id)}
-                      className={`w-6 h-6 rounded-full ${c.bg} transition-transform ${
-                        markColor === c.id ? 'ring-2 ring-white scale-110' : 'opacity-60 hover:opacity-100'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1e2638]">
-                <button
-                  type="button"
-                  onClick={() => setShowMarkModal(false)}
-                  className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingMark || !markTitle.trim()}
-                  className="px-4 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors shadow-lg shadow-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{savingMark ? 'Saving...' : 'Drop Mark'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowMarkModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={savingMark || !markTitle.trim()}
+                className="gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{savingMark ? 'Saving...' : 'Drop Mark'}</span>
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

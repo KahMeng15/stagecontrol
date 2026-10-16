@@ -6,6 +6,26 @@ import { useAuth } from '@/context/AuthContext';
 import { api, EventItem, EventStatus } from '@/lib/api';
 import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+  CardFooter,
+} from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 import {
   Calendar,
   Plus,
@@ -14,8 +34,8 @@ import {
   ArrowRight,
   Sparkles,
   AlertCircle,
-  X,
   CheckCircle,
+  Loader2,
 } from 'lucide-react';
 
 export default function DashboardPage() {
@@ -40,26 +60,27 @@ export default function DashboardPage() {
     }
   }, [user, isLoading, router]);
 
-  const loadEvents = async () => {
-    try {
-      setLoadingEvents(true);
-      const data = await api.listEvents();
-      setEvents(data);
-    } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Failed to load events');
-      }
-    } finally {
-      setLoadingEvents(false);
-    }
-  };
+
 
   useEffect(() => {
-    if (user) {
-      loadEvents();
-    }
+    if (!user) return;
+    let ignore = false;
+    api.listEvents().then((data) => {
+      if (!ignore) {
+        setEvents(data);
+        setLoadingEvents(false);
+      }
+    }).catch((err: unknown) => {
+      if (!ignore) {
+        const msg = err instanceof Error ? err.message : 'Failed to load events';
+        setError(msg);
+        toast.error('Failed to load events', { description: msg });
+        setLoadingEvents(false);
+      }
+    });
+    return () => {
+      ignore = true;
+    };
   }, [user]);
 
   const handleCreateEvent = async (e: React.FormEvent) => {
@@ -78,17 +99,16 @@ export default function DashboardPage() {
         description: newEventDesc.trim() || undefined,
       });
 
+      toast.success('Event created successfully');
       setShowModal(false);
       setNewEventName('');
       setNewEventSlug('');
       setNewEventDesc('');
       router.push(`/events/${created.slug || created.id}`);
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setModalError(err.message);
-      } else {
-        setModalError('Failed to create event');
-      }
+      const msg = err instanceof Error ? err.message : 'Failed to create event';
+      setModalError(msg);
+      toast.error(msg);
     } finally {
       setCreating(false);
     }
@@ -96,67 +116,68 @@ export default function DashboardPage() {
 
   if (isLoading || (!user && !error)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#090b10]">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
-  const getStatusBadge = (status: EventStatus) => {
+  const renderStatusBadge = (status: EventStatus) => {
     switch (status) {
       case 'live':
         return (
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-500/10 text-red-400 border border-red-500/30">
-            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse-live" />
+          <Badge variant="destructive" className="gap-1.5 font-semibold uppercase tracking-wider">
+            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse-live" />
             ON AIR
-          </span>
+          </Badge>
         );
       case 'completed':
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-800 text-slate-400 border border-slate-700">
+          <Badge variant="secondary" className="gap-1 text-muted-foreground">
             <CheckCircle className="w-3 h-3" />
             Completed
-          </span>
+          </Badge>
         );
       case 'draft':
       default:
         return (
-          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/30">
+          <Badge variant="outline" className="gap-1 border-blue-500/30 text-blue-400 bg-blue-500/10">
             <Clock className="w-3 h-3" />
             Rehearsal / Draft
-          </span>
+          </Badge>
         );
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#090b10] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col text-foreground">
       <Navbar />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-slate-100 flex items-center gap-2.5">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2.5">
               <span>Production Control Center</span>
             </h1>
-            <p className="text-sm text-slate-400 mt-1">
+            <p className="text-sm text-muted-foreground mt-1">
               Select an event to open the control room, live stream, cues & walkie-talkie
             </p>
           </div>
 
-          <button
+          <Button
             onClick={() => setShowModal(true)}
-            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-lg shadow-blue-600/20"
+            size="lg"
+            className="gap-2 shadow-lg shadow-primary/20 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
             <span>Create New Event</span>
-          </button>
+          </Button>
         </div>
 
         {error && (
-          <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+          <div className="mb-6 p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-sm flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
             <span>{error}</span>
           </div>
         )}
@@ -167,162 +188,156 @@ export default function DashboardPage() {
             {[1, 2, 3].map((i) => (
               <div
                 key={i}
-                className="h-48 rounded-2xl bg-[#11141f] border border-[#1e2638] animate-pulse"
+                className="h-48 rounded-xl bg-card border border-border/60 animate-pulse"
               />
             ))}
           </div>
         ) : events.length === 0 ? (
-          <div className="text-center py-16 px-4 bg-[#11141f]/50 border border-[#1e2638] border-dashed rounded-2xl">
-            <div className="w-12 h-12 rounded-2xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400 mx-auto mb-4">
-              <Radio className="w-6 h-6" />
-            </div>
-            <h3 className="text-lg font-semibold text-slate-200">No events yet</h3>
-            <p className="text-sm text-slate-400 max-w-md mx-auto mt-1 mb-6">
-              You haven&apos;t joined or created any stage events yet. Create your first event to start streaming and coordinating crew members.
-            </p>
-            <button
-              onClick={() => setShowModal(true)}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded-xl transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Create Event</span>
-            </button>
-          </div>
+          <Card className="text-center py-16 px-4 border-dashed border-border/80 bg-card/40">
+            <CardContent className="flex flex-col items-center">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-4">
+                <Radio className="w-6 h-6" />
+              </div>
+              <h3 className="text-lg font-semibold text-foreground">No events yet</h3>
+              <p className="text-sm text-muted-foreground max-w-md mx-auto mt-1 mb-6">
+                You haven&apos;t joined or created any stage events yet. Create your first event to start streaming and coordinating crew members.
+              </p>
+              <Button onClick={() => setShowModal(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
+                <span>Create Event</span>
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {events.map((ev) => (
-              <div
+              <Card
                 key={ev.id}
                 onClick={() => router.push(`/events/${ev.slug || ev.id}`)}
-                className="group cursor-pointer bg-[#11141f] hover:bg-[#151926] border border-[#1e2638] hover:border-blue-500/50 rounded-2xl p-6 transition-all duration-200 shadow-xl hover:shadow-2xl hover:shadow-blue-950/20 flex flex-col justify-between"
+                className="group cursor-pointer transition-all duration-200 hover:border-primary/50 hover:shadow-xl hover:shadow-primary/5 flex flex-col justify-between"
               >
-                <div>
-                  <div className="flex items-center justify-between gap-2 mb-3">
-                    {getStatusBadge(ev.status)}
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    {renderStatusBadge(ev.status)}
                     <RoleBadge role={ev.user_role} />
                   </div>
 
-                  <h3 className="text-lg font-semibold text-slate-100 group-hover:text-blue-400 transition-colors line-clamp-1">
+                  <CardTitle className="text-lg font-semibold text-foreground group-hover:text-primary transition-colors line-clamp-1">
                     {ev.name}
-                  </h3>
+                  </CardTitle>
 
-                  <p className="text-xs font-mono text-slate-400 mt-1">
-                    Room Code: <span className="text-slate-300 font-semibold">{ev.slug}</span>
+                  <p className="text-xs font-mono text-muted-foreground mt-0.5">
+                    Room Code: <span className="text-foreground/90 font-semibold">{ev.slug}</span>
                   </p>
 
                   {ev.description && (
-                    <p className="text-xs text-slate-400 mt-2 line-clamp-2">
+                    <CardDescription className="line-clamp-2 mt-2">
                       {ev.description}
-                    </p>
+                    </CardDescription>
                   )}
-                </div>
+                </CardHeader>
 
-                <div className="pt-6 mt-4 border-t border-[#1e2638] flex items-center justify-between text-xs text-slate-400">
+                <CardFooter className="pt-4 border-t border-border/40 flex items-center justify-between text-xs text-muted-foreground">
                   <div className="flex items-center gap-1.5">
                     <Calendar className="w-3.5 h-3.5" />
                     <span>{new Date(ev.created_at).toLocaleDateString()}</span>
                   </div>
 
-                  <span className="inline-flex items-center gap-1 text-blue-400 font-medium group-hover:translate-x-0.5 transition-transform">
+                  <span className="inline-flex items-center gap-1 text-primary font-medium group-hover:translate-x-0.5 transition-transform">
                     <span>Enter Room</span>
                     <ArrowRight className="w-3.5 h-3.5" />
                   </span>
-                </div>
-              </div>
+                </CardFooter>
+              </Card>
             ))}
           </div>
         )}
       </main>
 
-      {/* Create Event Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#11141f] border border-[#1e2638] w-full max-w-md rounded-2xl p-6 shadow-2xl relative">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-slate-100 flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-blue-400" />
-                <span>Create Production Event</span>
-              </h2>
-              <button
-                onClick={() => setShowModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+      {/* Create Event Dialog using shadcn/ui */}
+      <Dialog open={showModal} onOpenChange={setShowModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-primary" />
+              <span>Create Production Event</span>
+            </DialogTitle>
+            <DialogDescription>
+              Set up a new event room for live stream ingestion, stage cues, and walkie-talkie audio.
+            </DialogDescription>
+          </DialogHeader>
+
+          {modalError && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{modalError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleCreateEvent} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Event Title *
+              </label>
+              <Input
+                type="text"
+                required
+                placeholder="e.g. 2026 Spring Commencement"
+                value={newEventName}
+                onChange={(e) => setNewEventName(e.target.value)}
+                autoFocus
+              />
             </div>
 
-            {modalError && (
-              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <span>{modalError}</span>
-              </div>
-            )}
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Room Code / Slug <span className="text-muted-foreground font-normal lowercase">(optional)</span>
+              </label>
+              <Input
+                type="text"
+                placeholder="commencement-2026"
+                value={newEventSlug}
+                onChange={(e) => setNewEventSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, ''))}
+                className="font-mono"
+              />
+            </div>
 
-            <form onSubmit={handleCreateEvent} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Event Title *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. 2026 Spring Commencement"
-                  value={newEventName}
-                  onChange={(e) => setNewEventName(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Description <span className="text-muted-foreground font-normal lowercase">(optional)</span>
+              </label>
+              <textarea
+                rows={2}
+                placeholder="Main stage audio & lighting coordination"
+                value={newEventDesc}
+                onChange={(e) => setNewEventDesc(e.target.value)}
+                className="w-full min-w-0 rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none"
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Room Code / Slug <span className="text-slate-500 font-normal">(Optional, e.g. gala-2026)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="commencement-2026"
-                  value={newEventSlug}
-                  onChange={(e) => setNewEventSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, ''))}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-mono"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Description <span className="text-slate-500 font-normal">(Optional)</span>
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="Main stage audio & lighting coordination"
-                  value={newEventDesc}
-                  onChange={(e) => setNewEventDesc(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div className="flex items-center justify-end gap-3 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowModal(false)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors flex items-center gap-2"
-                >
-                  {creating ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <span>Create & Enter</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowModal(false)}
+                disabled={creating}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={creating} className="gap-2">
+                {creating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Creating...</span>
+                  </>
+                ) : (
+                  <span>Create & Enter</span>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

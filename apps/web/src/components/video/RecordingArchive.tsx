@@ -31,6 +31,18 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { toast } from 'sonner';
 
 interface RecordingArchiveProps {
   eventId: string;
@@ -402,12 +414,12 @@ export function RecordingArchive({
       {/* Player Section */}
       <div
         ref={playerContainerRef}
-        className="bg-[#11141f] border border-[#1e2638] rounded-2xl overflow-hidden flex flex-col shadow-2xl"
+        className="bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col shadow-2xl text-card-foreground"
       >
-        <div className="px-4 py-3 border-b border-[#1e2638] flex items-center justify-between bg-[#0e111a]">
+        <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between bg-muted/30">
           <div className="flex items-center gap-2">
-            <Film className="w-4 h-4 text-purple-400" />
-            <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+            <Film className="w-4 h-4 text-primary" />
+            <span className="text-xs font-bold text-foreground uppercase tracking-wider">
               {selectedRecording ? formatFriendlyRecordingTitle(selectedRecording.title) : 'Recording Playback & Replay'}
             </span>
           </div>
@@ -415,27 +427,30 @@ export function RecordingArchive({
           <div className="flex items-center gap-3">
             {selectedRecording && (
               <>
-                <button
+                <Button
+                  size="xs"
+                  variant="secondary"
                   onClick={handleOpenAddChapter}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-md bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 transition-colors shadow-sm"
+                  className="gap-1.5 text-[11px]"
                   title="Add chapter marker at current time"
                 >
-                  <Flag className="w-3.5 h-3.5 text-purple-400" />
+                  <Flag className="w-3.5 h-3.5 text-primary" />
                   <span>+ Add Chapter</span>
-                </button>
-                <span className="text-[11px] font-mono text-slate-400">
+                </Button>
+                <span className="text-[11px] font-mono text-muted-foreground">
                   {formatFileSize(selectedRecording.file_size_bytes)}
                 </span>
               </>
             )}
-            <button
+            <Button
+              variant="ghost"
+              size="icon-xs"
               onClick={loadRecordings}
               disabled={loading}
-              className="p-1 text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] rounded-md transition-colors"
               title="Refresh recordings"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -1135,118 +1150,111 @@ export function RecordingArchive({
         )}
       </div>
 
-      {/* Add Chapter / Mark Modal */}
-      {showAddChapterModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="w-full max-w-sm bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-2xl">
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Flag className="w-4 h-4 text-purple-400" />
-                <h3 className="text-sm font-bold text-slate-100">Add Chapter Mark</h3>
+      {/* Add Chapter / Mark Dialog using shadcn/ui */}
+      <Dialog open={showAddChapterModal} onOpenChange={setShowAddChapterModal}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Flag className="w-4 h-4 text-primary" />
+              <span>Add Chapter Mark</span>
+            </DialogTitle>
+            <DialogDescription>
+              Pin a cue point to the recording timeline.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleCreateChapter} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                  Chapter / Cue Title *
+                </label>
+                <span className="text-[11px] font-mono text-primary font-bold">
+                  @ {formatTime(chapterTime)}
+                </span>
               </div>
-              <button
-                onClick={() => setShowAddChapterModal(false)}
-                className="text-slate-400 hover:text-slate-200 p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <Input
+                type="text"
+                value={chapterTitle}
+                onChange={(e) => setChapterTitle(e.target.value)}
+                placeholder="e.g. Act 1 Scene 2, Solo, Intermission"
+                autoFocus
+                required
+              />
             </div>
 
-            <form onSubmit={handleCreateChapter} className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-slate-300">
-                    Chapter / Cue Title
-                  </label>
-                  <span className="text-[11px] font-mono text-purple-400 font-bold">
-                    @ {formatTime(chapterTime)}
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={chapterTitle}
-                  onChange={(e) => setChapterTitle(e.target.value)}
-                  placeholder="e.g. Act 1 Scene 2, Solo, Intermission"
-                  className="w-full px-3 py-2 text-xs bg-[#0b0e17] border border-[#1e2638] focus:border-purple-500 rounded-xl text-slate-100 outline-none"
-                  autoFocus
-                  required
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">Optional Notes</label>
+              <Input
+                type="text"
+                value={chapterDescription}
+                onChange={(e) => setChapterDescription(e.target.value)}
+                placeholder="Additional cues or notes..."
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-400 mb-1">
-                  Optional Notes
-                </label>
-                <input
-                  type="text"
-                  value={chapterDescription}
-                  onChange={(e) => setChapterDescription(e.target.value)}
-                  placeholder="Additional cues or notes..."
-                  className="w-full px-3 py-1.5 text-xs bg-[#0b0e17] border border-[#1e2638] focus:border-purple-500 rounded-xl text-slate-100 outline-none"
-                />
+            {/* Quick Presets */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">Quick Presets</label>
+              <div className="flex flex-wrap gap-1.5">
+                {['Scene 1', 'Scene 2', 'Solo Performance', 'Intermission', 'Key Cue', 'Finale'].map((preset) => (
+                  <Button
+                    type="button"
+                    key={preset}
+                    size="xs"
+                    variant="outline"
+                    onClick={() => setChapterTitle(preset)}
+                    className="text-[10px]"
+                  >
+                    {preset}
+                  </Button>
+                ))}
               </div>
+            </div>
 
-              {/* Quick Presets */}
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1.5">Quick Presets</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {['Scene 1', 'Scene 2', 'Solo Performance', 'Intermission', 'Key Cue', 'Finale'].map((preset) => (
-                    <button
-                      type="button"
-                      key={preset}
-                      onClick={() => setChapterTitle(preset)}
-                      className="text-[10px] px-2 py-0.5 rounded-md bg-[#161c2c] hover:bg-[#202940] text-slate-300 border border-[#232d44] transition-colors"
-                    >
-                      {preset}
-                    </button>
-                  ))}
-                </div>
+            {/* Color selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs text-muted-foreground">Pin Color</label>
+              <div className="flex items-center gap-2">
+                {[
+                  { id: 'purple', bg: 'bg-purple-500' },
+                  { id: 'blue', bg: 'bg-blue-500' },
+                  { id: 'emerald', bg: 'bg-emerald-500' },
+                  { id: 'amber', bg: 'bg-amber-500' },
+                  { id: 'rose', bg: 'bg-rose-500' },
+                ].map((c) => (
+                  <button
+                    type="button"
+                    key={c.id}
+                    onClick={() => setChapterColor(c.id)}
+                    className={`w-6 h-6 rounded-full ${c.bg} transition-transform ${
+                      chapterColor === c.id ? 'ring-2 ring-foreground scale-110' : 'opacity-60 hover:opacity-100'
+                    }`}
+                  />
+                ))}
               </div>
+            </div>
 
-              {/* Color selector */}
-              <div>
-                <label className="block text-[11px] text-slate-400 mb-1.5">Pin Color</label>
-                <div className="flex items-center gap-2">
-                  {[
-                    { id: 'purple', bg: 'bg-purple-500' },
-                    { id: 'blue', bg: 'bg-blue-500' },
-                    { id: 'emerald', bg: 'bg-emerald-500' },
-                    { id: 'amber', bg: 'bg-amber-500' },
-                    { id: 'rose', bg: 'bg-rose-500' },
-                  ].map((c) => (
-                    <button
-                      type="button"
-                      key={c.id}
-                      onClick={() => setChapterColor(c.id)}
-                      className={`w-6 h-6 rounded-full ${c.bg} transition-transform ${
-                        chapterColor === c.id ? 'ring-2 ring-white scale-110' : 'opacity-60 hover:opacity-100'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1e2638]">
-                <button
-                  type="button"
-                  onClick={() => setShowAddChapterModal(false)}
-                  className="px-3 py-1.5 text-xs font-medium text-slate-400 hover:text-slate-200 rounded-lg transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={savingChapter || !chapterTitle.trim()}
-                  className="px-4 py-1.5 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors shadow-lg shadow-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>{savingChapter ? 'Saving...' : 'Pin Chapter'}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowAddChapterModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={savingChapter || !chapterTitle.trim()}
+                className="gap-1.5"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>{savingChapter ? 'Saving...' : 'Pin Chapter'}</span>
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

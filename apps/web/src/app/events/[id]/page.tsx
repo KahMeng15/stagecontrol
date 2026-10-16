@@ -9,6 +9,39 @@ import { RoleBadge } from '@/components/RoleBadge';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
 import ScriptTracker from '@/components/script/ScriptTracker';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
+import {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+  CardContent,
+} from '@/components/ui/card';
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '@/components/ui/tabs';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import {
+  Table,
+  TableHeader,
+  TableRow,
+  TableHead,
+  TableBody,
+  TableCell,
+} from '@/components/ui/table';
+import { toast } from 'sonner';
 import {
   Radio,
   Users,
@@ -23,18 +56,13 @@ import {
   FileText,
   Mic,
   AlertCircle,
-  Clock,
-  Sparkles,
   KeyRound,
-  Link2,
   ExternalLink,
   ShieldOff,
-  Globe,
-  Network,
   Film,
   Zap,
+  Loader2,
 } from 'lucide-react';
-
 
 function EventContent() {
   const router = useRouter();
@@ -79,11 +107,9 @@ function EventContent() {
       const data = await api.getEvent(eventId);
       setEvent(data);
     } catch (err: unknown) {
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Failed to load event details. You might not have access.');
-      }
+      const msg = err instanceof Error ? err.message : 'Failed to load event details';
+      setError(msg);
+      toast.error('Failed to load event details', { description: msg });
     } finally {
       setLoading(false);
     }
@@ -91,8 +117,29 @@ function EventContent() {
 
   useEffect(() => {
     if (user && eventId) {
-      fetchEventData();
-      api.getSettings().then(setSystemSettings).catch(() => null);
+      let ignore = false;
+      api.getEvent(eventId)
+        .then((data) => {
+          if (!ignore) {
+            setEvent(data);
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!ignore) {
+            const msg = err instanceof Error ? err.message : 'Failed to load event details';
+            setError(msg);
+            setLoading(false);
+          }
+        });
+
+      api.getSettings().then((s) => {
+        if (!ignore) setSystemSettings(s);
+      }).catch(() => null);
+
+      return () => {
+        ignore = true;
+      };
     }
   }, [user, eventId]);
 
@@ -100,20 +147,23 @@ function EventContent() {
     if (event?.stream_key) {
       navigator.clipboard.writeText(event.stream_key);
       setCopiedKey(true);
+      toast.success('Stream key copied to clipboard');
       setTimeout(() => setCopiedKey(false), 2000);
     }
   };
 
   const handleRegenerateKey = async () => {
-    if (!event || !confirm('Are you sure you want to regenerate the stream key? The current OBS stream will disconnect.')) {
+    if (!event) return;
+    if (!window.confirm('Are you sure you want to regenerate the stream key? Any active OBS stream will disconnect immediately.')) {
       return;
     }
     try {
       setRegenerating(true);
       const updated = await api.regenerateStreamKey(event.id);
       setEvent((prev) => (prev ? { ...prev, stream_key: updated.stream_key } : null));
+      toast.success('Stream key regenerated successfully');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to regenerate stream key');
+      toast.error(err instanceof Error ? err.message : 'Failed to regenerate stream key');
     } finally {
       setRegenerating(false);
     }
@@ -133,15 +183,17 @@ function EventContent() {
             }
           : null
       );
+      toast.success('New 6-digit public PIN activated');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to generate 6-digit PIN');
+      toast.error(err instanceof Error ? err.message : 'Failed to generate PIN');
     } finally {
       setPinActionLoading(false);
     }
   };
 
   const handleRevokePin = async () => {
-    if (!event || !confirm('Are you sure you want to revoke the 6-digit PIN? All guest viewers with this PIN will immediately lose access.')) {
+    if (!event) return;
+    if (!window.confirm('Are you sure you want to revoke the 6-digit PIN? Guest viewers with this PIN will immediately lose access.')) {
       return;
     }
     try {
@@ -156,8 +208,9 @@ function EventContent() {
             }
           : null
       );
+      toast.success('Public PIN access revoked');
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to revoke PIN access');
+      toast.error(err instanceof Error ? err.message : 'Failed to revoke PIN access');
     } finally {
       setPinActionLoading(false);
     }
@@ -178,18 +231,20 @@ function EventContent() {
       const url = `${getActiveBaseUrl()}/view/${event.public_pin}`;
       navigator.clipboard.writeText(url);
       setCopiedPinLink(true);
+      toast.success('Public audience link copied to clipboard');
       setTimeout(() => setCopiedPinLink(false), 2000);
     }
   };
 
   const handleStatusChange = async (newStatus: EventStatus) => {
-    if (!event) return;
+    if (!event || event.status === newStatus) return;
     try {
       setUpdatingStatus(true);
       const updated = await api.updateEvent(event.id, { status: newStatus });
       setEvent((prev) => (prev ? { ...prev, status: updated.status } : null));
+      toast.success(`Event status changed to ${newStatus.toUpperCase()}`);
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to update event status');
+      toast.error(err instanceof Error ? err.message : 'Failed to update event status');
     } finally {
       setUpdatingStatus(false);
     }
@@ -208,55 +263,56 @@ function EventContent() {
         callsign: inviteCallsign.trim() || undefined,
       });
 
+      toast.success(`Added ${inviteIdentifier} to crew`);
       setShowAddMember(false);
       setInviteIdentifier('');
       setInviteCallsign('');
-      // Refresh event data to update members list
       await fetchEventData();
     } catch (err: unknown) {
-      setInviteError(err instanceof Error ? err.message : 'Failed to add crew member');
+      const msg = err instanceof Error ? err.message : 'Failed to add crew member';
+      setInviteError(msg);
+      toast.error(msg);
     } finally {
       setInviting(false);
     }
   };
 
   const handleRemoveMember = async (membershipId: string, username?: string) => {
-    if (!event || !confirm(`Remove ${username || 'this member'} from the crew?`)) return;
+    if (!event) return;
+    if (!window.confirm(`Remove ${username || 'this member'} from the crew?`)) return;
     try {
       await api.removeMember(event.id, membershipId);
+      toast.success(`Removed ${username || 'member'} from crew`);
       await fetchEventData();
     } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to remove member');
+      toast.error(err instanceof Error ? err.message : 'Failed to remove member');
     }
   };
 
   if (authLoading || (loading && !event && !error)) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#090b10]">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
       </div>
     );
   }
 
   if (error || !event) {
     return (
-      <div className="min-h-screen bg-[#090b10] flex flex-col">
+      <div className="min-h-screen bg-background flex flex-col text-foreground">
         <Navbar />
         <div className="flex-1 max-w-lg mx-auto px-4 flex flex-col items-center justify-center text-center">
-          <div className="w-12 h-12 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 mb-4">
+          <div className="w-12 h-12 rounded-2xl bg-destructive/10 border border-destructive/30 flex items-center justify-center text-destructive mb-4">
             <AlertCircle className="w-6 h-6" />
           </div>
-          <h2 className="text-xl font-bold text-slate-100">Access Restricted</h2>
-          <p className="text-sm text-slate-400 mt-2 mb-6">
+          <h2 className="text-xl font-bold text-foreground">Access Restricted</h2>
+          <p className="text-sm text-muted-foreground mt-2 mb-6">
             {error || 'You do not have permission to view this event.'}
           </p>
-          <button
-            onClick={() => router.push('/')}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-sm font-medium transition-colors"
-          >
+          <Button onClick={() => router.push('/')} className="gap-2">
             <ArrowLeft className="w-4 h-4" />
             <span>Back to Dashboard</span>
-          </button>
+          </Button>
         </div>
       </div>
     );
@@ -266,140 +322,121 @@ function EventContent() {
   const isSMOrAdmin = isAdmin || event.user_role === 'stage_manager';
 
   return (
-    <div className="min-h-screen bg-[#090b10] flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col text-foreground">
       <Navbar />
 
       {/* Event Header Banner */}
-      <div className="border-b border-[#1e2638] bg-[#0c0e16]">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 sm:py-6">
+      <div className="border-b border-border/60 bg-card/60 backdrop-blur-sm">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <button
+              <div className="flex items-center gap-2.5">
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
                   onClick={() => router.push('/')}
-                  className="p-1 rounded-lg text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] transition-colors"
+                  className="rounded-lg text-muted-foreground hover:text-foreground"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                </button>
-                <h1 className="text-xl sm:text-2xl font-bold text-slate-100 tracking-tight">
+                </Button>
+                <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">
                   {event.name}
                 </h1>
                 <RoleBadge role={event.user_role} />
               </div>
-              <p className="text-xs text-slate-400 flex items-center gap-2">
-                <span>Room Code: <strong className="font-mono text-slate-300">{event.slug}</strong></span>
+              <p className="text-xs text-muted-foreground flex items-center gap-2 pl-9 sm:pl-9">
+                <span>Room Code: <strong className="font-mono text-foreground">{event.slug}</strong></span>
                 <span>•</span>
                 <span>Created {new Date(event.created_at).toLocaleDateString()}</span>
               </p>
             </div>
 
-            {/* Status and Actions */}
+            {/* Status Selector */}
             <div className="flex items-center gap-3">
               {isSMOrAdmin ? (
-                <div className="flex items-center gap-1.5 bg-[#11141f] border border-[#1e2638] rounded-xl p-1">
+                <div className="flex items-center gap-1 bg-muted p-1 rounded-lg border border-border/50">
                   {(['draft', 'live', 'completed'] as EventStatus[]).map((st) => (
-                    <button
+                    <Button
                       key={st}
                       disabled={updatingStatus}
-                      onClick={() => handleStatusChange(st)}
-                      className={`px-3 py-1 text-xs font-semibold rounded-lg capitalize transition-colors ${
+                      size="sm"
+                      variant={
                         event.status === st
                           ? st === 'live'
-                            ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
-                            : 'bg-blue-600 text-white'
-                          : 'text-slate-400 hover:text-slate-200'
-                      }`}
+                            ? 'destructive'
+                            : 'default'
+                          : 'ghost'
+                      }
+                      onClick={() => handleStatusChange(st)}
+                      className="text-xs capitalize font-semibold h-7"
                     >
-                      {st === 'live' ? 'Live' : st}
-                    </button>
+                      {st === 'live' ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live" />
+                          LIVE
+                        </span>
+                      ) : (
+                        st
+                      )}
+                    </Button>
                   ))}
                 </div>
               ) : (
-                <span className={`px-3 py-1 text-xs font-semibold rounded-lg uppercase tracking-wider ${
-                  event.status === 'live'
-                    ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-                    : 'bg-slate-800 text-slate-400'
-                }`}>
-                  Status: {event.status}
-                </span>
+                <Badge
+                  variant={event.status === 'live' ? 'destructive' : 'secondary'}
+                  className="uppercase tracking-wider font-semibold"
+                >
+                  {event.status === 'live' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live mr-1" />
+                  )}
+                  {event.status}
+                </Badge>
               )}
             </div>
-          </div>
-
-          {/* Navigation Tabs */}
-          <div className="flex items-center gap-4 mt-6 border-t border-[#1e2638] pt-3">
-            <button
-              onClick={() => setActiveTab('control')}
-              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
-                activeTab === 'control'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Radio className="w-4 h-4" />
-              <span>Control Room</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('script')}
-              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
-                activeTab === 'script'
-                  ? 'border-purple-500 text-purple-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <FileText className="w-4 h-4" />
-              <span>Live Script & Cues</span>
-            </button>
-
-            <button
-              onClick={() => setActiveTab('recordings')}
-              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
-                activeTab === 'recordings'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Film className="w-4 h-4" />
-              <span>Recordings & Replay</span>
-            </button>
-
-            {isSMOrAdmin && (
-              <button
-                onClick={() => setActiveTab('stream')}
-                className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
-                  activeTab === 'stream'
-                    ? 'border-blue-500 text-blue-400'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Tv className="w-4 h-4" />
-                <span>OBS & Video Setup</span>
-              </button>
-            )}
-
-            <button
-              onClick={() => setActiveTab('crew')}
-              className={`flex items-center gap-2 text-sm font-medium pb-2 border-b-2 transition-colors ${
-                activeTab === 'crew'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span>Crew Roster ({event.memberships?.length || 1})</span>
-            </button>
           </div>
         </div>
       </div>
 
-      {/* Main Tab Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {activeTab === 'control' && (
-          <div className="space-y-6">
-            {/* Control Room Top Grid */}
+      {/* Main Tabbed Interface */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <Tabs
+          value={activeTab}
+          onValueChange={(val) => setActiveTab(val as typeof activeTab)}
+          className="space-y-6"
+        >
+          <TabsList variant="line" className="border-b border-border/60 w-full justify-start gap-6 pb-px">
+            <TabsTrigger value="control" className="gap-2 text-xs font-semibold py-2">
+              <Radio className="w-4 h-4" />
+              <span>Control Room</span>
+            </TabsTrigger>
+
+            <TabsTrigger value="script" className="gap-2 text-xs font-semibold py-2">
+              <FileText className="w-4 h-4" />
+              <span>Live Script & Cues</span>
+            </TabsTrigger>
+
+            <TabsTrigger value="recordings" className="gap-2 text-xs font-semibold py-2">
+              <Film className="w-4 h-4" />
+              <span>Recordings & Replay</span>
+            </TabsTrigger>
+
+            {isSMOrAdmin && (
+              <TabsTrigger value="stream" className="gap-2 text-xs font-semibold py-2">
+                <Tv className="w-4 h-4" />
+                <span>OBS & Video Setup</span>
+              </TabsTrigger>
+            )}
+
+            <TabsTrigger value="crew" className="gap-2 text-xs font-semibold py-2">
+              <Users className="w-4 h-4" />
+              <span>Crew Roster ({event.memberships?.length || 1})</span>
+            </TabsTrigger>
+          </TabsList>
+
+          {/* Tab 1: Control Room */}
+          <TabsContent value="control" className="space-y-6 mt-0">
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Ultra-low latency Live Video Player (Milestone 2) */}
+              {/* Ultra-low latency Live Video Player */}
               <div className="lg:col-span-2">
                 <LivePlayer
                   eventId={event.id}
@@ -409,490 +446,480 @@ function EventContent() {
                 />
               </div>
 
-
-              {/* Walkie-Talkie & Comms Panel (Prepared for Milestone 4) */}
-              <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-center justify-between mb-4">
+              {/* Walkie-Talkie & Comms Card */}
+              <Card className="flex flex-col justify-between">
+                <CardHeader>
+                  <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <Mic className="w-4 h-4 text-emerald-400" />
-                      <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                      <CardTitle className="text-xs font-bold uppercase tracking-wider">
                         Crew Walkie-Talkie
-                      </span>
+                      </CardTitle>
                     </div>
-                    <span className="text-[10px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full">
+                    <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10 text-[10px]">
                       VOICE READY
-                    </span>
+                    </Badge>
                   </div>
-
-                  <p className="text-xs text-slate-400 mb-6">
+                  <CardDescription className="text-xs">
                     Real-time push-to-talk voice channel for stage directors, audio ops, and presenters.
-                  </p>
-                </div>
+                  </CardDescription>
+                </CardHeader>
 
-                <div className="flex flex-col items-center py-6 bg-[#0c0e16] rounded-xl border border-[#1e2638]">
-                  <button
+                <CardContent className="flex flex-col items-center py-6 bg-muted/40 mx-4 mb-4 rounded-xl border border-border/50">
+                  <Button
                     disabled
-                    className="w-24 h-24 rounded-full bg-blue-600/10 border-2 border-blue-500/30 flex flex-col items-center justify-center text-blue-400 opacity-60 cursor-not-allowed"
+                    size="lg"
+                    className="w-24 h-24 rounded-full flex flex-col items-center justify-center opacity-60 cursor-not-allowed border-2 border-primary/30"
                   >
                     <Mic className="w-8 h-8 mb-1" />
                     <span className="text-[10px] font-bold tracking-wider">HOLD TO TALK</span>
-                  </button>
-                  <span className="text-[11px] text-slate-500 mt-4">
-                    Voice room: <strong>{event.slug}-comms</strong>
+                  </Button>
+                  <span className="text-[11px] text-muted-foreground mt-4">
+                    Voice room: <strong className="text-foreground">{event.slug}-comms</strong>
                   </span>
-                </div>
-              </div>
+                </CardContent>
+              </Card>
             </div>
 
-            {/* Live Script & Cue Tracker */}
+            {/* Embedded Live Script & Cue Tracker */}
             <ScriptTracker eventId={event.id} isSMOrAdmin={isSMOrAdmin} />
-          </div>
-        )}
+          </TabsContent>
 
-        {/* Dedicated Live Script & Cues Tab */}
-        {activeTab === 'script' && (
-          <div className="space-y-6">
+          {/* Tab 2: Dedicated Live Script & Cues */}
+          <TabsContent value="script" className="space-y-6 mt-0">
             <ScriptTracker
               eventId={event.id}
               isSMOrAdmin={isSMOrAdmin}
               className="min-h-[700px]"
             />
-          </div>
-        )}
+          </TabsContent>
 
-        {/* Recordings & Replay Archive Tab (Milestone 2) */}
-        {activeTab === 'recordings' && (
-          <RecordingArchive
-            eventId={event.id}
-            isAdmin={isAdmin}
-            isSMOrAdmin={isSMOrAdmin}
-          />
-        )}
+          {/* Tab 3: Recordings & Replay */}
+          <TabsContent value="recordings" className="space-y-6 mt-0">
+            <RecordingArchive
+              eventId={event.id}
+              isAdmin={isAdmin}
+              isSMOrAdmin={isSMOrAdmin}
+            />
+          </TabsContent>
 
-        {/* OBS Stream Setup Tab */}
-        {activeTab === 'stream' && isSMOrAdmin && (
-          <div className="max-w-3xl space-y-6">
-            <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-blue-600/10 border border-blue-500/30 flex items-center justify-center text-blue-400">
-                  <Key className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-slate-100">OBS Studio Streaming Credentials</h2>
-                  <p className="text-xs text-slate-400">
-                    Use these credentials in OBS Studio or any RTMP/WHIP streaming software.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                {/* RTMP Server URL */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Stream Server URL (RTMP)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      readOnly
-                      value="rtmp://localhost:1935/live"
-                      className="flex-1 px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-200"
-                    />
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText('rtmp://localhost:1935/live');
-                        alert('Server URL copied!');
-                      }}
-                      className="px-3 py-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                      <span>Copy</span>
-                    </button>
-                  </div>
-                </div>
-
-                {/* Stream Key */}
-                <div>
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Stream Key (Secret)
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="password"
-                      readOnly
-                      value={event.stream_key || '••••••••••••••••••••••••'}
-                      className="flex-1 px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-blue-400"
-                    />
-                    <button
-                      onClick={handleCopyStreamKey}
-                      className="px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-blue-600/20"
-                    >
-                      {copiedKey ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                      <span>{copiedKey ? 'Copied' : 'Copy Key'}</span>
-                    </button>
-                    {isAdmin && (
-                      <button
-                        onClick={handleRegenerateKey}
-                        disabled={regenerating}
-                        title="Regenerate Stream Key"
-                        className="p-2 bg-[#1a2030] hover:bg-red-500/20 hover:text-red-400 text-slate-400 rounded-lg transition-colors"
-                      >
-                        <RefreshCw className={`w-4 h-4 ${regenerating ? 'animate-spin' : ''}`} />
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1.5">
-                    Never share this key publicly. Only Admins and Stage Managers can view or regenerate this key.
-                  </p>
-                </div>
-
-                {/* WebRTC WHIP URL for low latency */}
-                <div className="pt-4 border-t border-[#1e2638]">
-                  <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
-                    WHIP Ingest URL (Ultra-low latency WebRTC streaming)
-                  </label>
-                  <input
-                    type="text"
-                    readOnly
-                    value={`http://localhost:8889/live/${event.stream_key}/whip`}
-                    className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-400"
-                  />
-                </div>
-
-                {/* Important OBS Settings Note for WebRTC */}
-                <div className="p-3.5 rounded-xl bg-blue-950/30 border border-blue-500/30 text-xs space-y-2">
-                  <div className="flex items-center gap-2 font-bold text-blue-300">
-                    <Zap className="w-4 h-4 text-amber-400" />
-                    <span>Recommended OBS Settings for Ultra-Low Latency (~200ms)</span>
-                  </div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    WebRTC requires video frames without future dependencies:
-                  </p>
-                  <ul className="list-disc list-inside text-[11px] text-slate-400 space-y-1 pl-1">
-                    <li>
-                      <strong className="text-slate-200">Max B-frames: 0</strong> (in OBS: <em>Settings → Output → Advanced → Max B-frames: 0</em>)
-                    </li>
-                    <li>
-                      <strong className="text-slate-200">Tune: zerolatency</strong> (or low latency mode)
-                    </li>
-                    <li>
-                      <strong className="text-slate-200">Keyframe Interval: 1s or 2s</strong>
-                    </li>
-                  </ul>
-                  <p className="text-[10px] text-slate-500 italic pt-1 border-t border-blue-900/40">
-                    Tip: If B-frames remain enabled (OBS default is 2), simply switch the control room player to <strong>HLS</strong> mode, which supports B-frames with full stereo audio.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-
-            {/* Public 6-Digit PIN & Audience Access Card */}
-            <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-purple-600/10 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                    <KeyRound className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <h2 className="text-base font-bold text-slate-100 flex items-center gap-2">
-                      <span>Public Audience View Link</span>
-                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                        event.public_pin_enabled
-                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30'
-                          : 'bg-slate-800 text-slate-400 border border-slate-700'
-                      }`}>
-                        {event.public_pin_enabled ? 'ACTIVE' : 'DISABLED'}
-                      </span>
-                    </h2>
-                    <p className="text-xs text-slate-400">
-                      Allows anyone to join as a read-only viewer with a 6-digit PIN. No registration needed.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              {event.public_pin_enabled && event.public_pin ? (
-                <div className="space-y-4 pt-2">
-                  <div className="p-4 rounded-xl bg-[#0c0e16] border border-[#1e2638] flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          {/* Tab 4: OBS Stream Setup */}
+          {isSMOrAdmin && (
+            <TabsContent value="stream" className="max-w-3xl space-y-6 mt-0">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                      <Key className="w-5 h-5" />
+                    </div>
                     <div>
-                      <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
-                        6-Digit Room Access PIN
-                      </span>
-                      <div className="text-3xl font-mono font-bold tracking-widest text-purple-400">
-                        {event.public_pin.slice(0, 3)} {event.public_pin.slice(3)}
-                      </div>
+                      <CardTitle className="text-base font-bold">OBS Studio Streaming Credentials</CardTitle>
+                      <CardDescription className="text-xs">
+                        Use these credentials in OBS Studio or any RTMP/WHIP streaming software.
+                      </CardDescription>
                     </div>
-
-                    {isAdmin && (
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleGeneratePin}
-                          disabled={pinActionLoading}
-                          className="px-3 py-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
-                          title="Generate a new 6-digit PIN (replaces current)"
-                        >
-                          <RefreshCw className={`w-3.5 h-3.5 ${pinActionLoading ? 'animate-spin' : ''}`} />
-                          <span>Rotate PIN</span>
-                        </button>
-                        <button
-                          onClick={handleRevokePin}
-                          disabled={pinActionLoading}
-                          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5"
-                          title="Immediately block public access"
-                        >
-                          <ShieldOff className="w-3.5 h-3.5" />
-                          <span>Revoke Access</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
+                </CardHeader>
 
-                  <div>
-                    <div className="flex items-center justify-between mb-1.5">
-                      <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                        Direct Shareable Public Link
-                      </label>
-                      {systemSettings?.alternative_domain && (
-                        <div className="flex items-center gap-1 bg-[#090b10] border border-[#1e2638] rounded-lg p-0.5">
-                          <button
-                            type="button"
-                            onClick={() => setSelectedDomainType('primary')}
-                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                              selectedDomainType === 'primary'
-                                ? 'bg-purple-600 text-white'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            Primary Domain
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedDomainType('alternative')}
-                            className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                              selectedDomainType === 'alternative'
-                                ? 'bg-purple-600 text-white'
-                                : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                          >
-                            LAN / Alt Domain
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                <CardContent className="space-y-4">
+                  {/* RTMP Server URL */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Stream Server URL (RTMP)
+                    </label>
                     <div className="flex items-center gap-2">
-                      <input
+                      <Input
                         type="text"
                         readOnly
-                        value={`${getActiveBaseUrl()}/view/${event.public_pin}`}
-                        className="flex-1 px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg font-mono text-xs text-slate-200"
+                        value="rtmp://localhost:1935/live"
+                        className="font-mono text-xs"
                       />
-                      <button
-                        onClick={handleCopyPublicLink}
-                        className="px-3 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 shadow-md shadow-purple-600/20"
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        onClick={() => {
+                          navigator.clipboard.writeText('rtmp://localhost:1935/live');
+                          toast.success('RTMP server URL copied');
+                        }}
+                        className="gap-1.5 shrink-0"
                       >
-                        {copiedPinLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedPinLink ? 'Copied' : 'Copy Link'}</span>
-                      </button>
-                      <a
-                        href={`${getActiveBaseUrl()}/view/${event.public_pin}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="p-2 bg-[#1a2030] hover:bg-[#222b40] text-slate-300 rounded-lg transition-colors"
-                        title="Open in new tab"
-                      >
-                        <ExternalLink className="w-4 h-4" />
-                      </a>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>Copy</span>
+                      </Button>
                     </div>
-                    <p className="text-[11px] text-slate-500 mt-1.5">
-                      Share this direct link with your audience or students. They can open it directly or enter the 6-digit PIN on the home page.
+                  </div>
+
+                  {/* Stream Key */}
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      Stream Key (Secret)
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="password"
+                        readOnly
+                        value={event.stream_key || '••••••••••••••••••••••••'}
+                        className="font-mono text-xs text-primary"
+                      />
+                      <Button
+                        type="button"
+                        onClick={handleCopyStreamKey}
+                        className="gap-1.5 shrink-0 shadow-md shadow-primary/20"
+                      >
+                        {copiedKey ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copiedKey ? 'Copied' : 'Copy Key'}</span>
+                      </Button>
+                      {isAdmin && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          onClick={handleRegenerateKey}
+                          disabled={regenerating}
+                          title="Regenerate Stream Key"
+                          className="shrink-0 hover:text-destructive hover:border-destructive/40"
+                        >
+                          <RefreshCw className={`w-4 h-4 ${regenerating ? 'animate-spin' : ''}`} />
+                        </Button>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Never share this key publicly. Only Admins and Stage Managers can view or regenerate this key.
                     </p>
                   </div>
-                </div>
-              ) : (
-                <div className="pt-2">
-                  <p className="text-xs text-slate-400 mb-4">
-                    Public viewer access is currently disabled. Only invited crew members can open this event.
-                  </p>
-                  {isAdmin && (
-                    <button
-                      onClick={handleGeneratePin}
-                      disabled={pinActionLoading}
-                      className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white text-xs font-medium rounded-xl transition-colors flex items-center gap-2 shadow-lg shadow-purple-600/20"
-                    >
-                      <KeyRound className="w-4 h-4" />
-                      <span>{pinActionLoading ? 'Generating...' : 'Enable 6-Digit Public PIN'}</span>
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
 
-        {/* Crew Roster Tab */}
-        {activeTab === 'crew' && (
-          <div className="space-y-6">
+                  {/* WebRTC WHIP URL */}
+                  <div className="pt-4 border-t border-border/50 space-y-1.5">
+                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      WHIP Ingest URL (Ultra-low latency WebRTC streaming)
+                    </label>
+                    <Input
+                      type="text"
+                      readOnly
+                      value={`http://localhost:8889/live/${event.stream_key}/whip`}
+                      className="font-mono text-xs text-muted-foreground"
+                    />
+                  </div>
+
+                  {/* OBS Settings Advisory */}
+                  <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 text-xs space-y-2">
+                    <div className="flex items-center gap-2 font-bold text-foreground">
+                      <Zap className="w-4 h-4 text-amber-400" />
+                      <span>Recommended OBS Settings for Ultra-Low Latency (~200ms)</span>
+                    </div>
+                    <ul className="list-disc list-inside text-[11px] text-muted-foreground space-y-1 pl-1">
+                      <li><strong className="text-foreground">Max B-frames: 0</strong> (OBS: <em>Settings → Output → Advanced → Max B-frames: 0</em>)</li>
+                      <li><strong className="text-foreground">Tune: zerolatency</strong></li>
+                      <li><strong className="text-foreground">Keyframe Interval: 1s or 2s</strong></li>
+                    </ul>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Public 6-Digit PIN Card */}
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                        <KeyRound className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base font-bold flex items-center gap-2">
+                          <span>Public Audience View Link</span>
+                          <Badge
+                            variant={event.public_pin_enabled ? 'default' : 'secondary'}
+                            className="text-[10px]"
+                          >
+                            {event.public_pin_enabled ? 'ACTIVE' : 'DISABLED'}
+                          </Badge>
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                          Allows anyone to join as a read-only viewer with a 6-digit PIN.
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
+                  {event.public_pin_enabled && event.public_pin ? (
+                    <div className="space-y-4">
+                      <div className="p-4 rounded-xl bg-muted/40 border border-border/50 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div>
+                          <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider block mb-1">
+                            6-Digit Room Access PIN
+                          </span>
+                          <div className="text-3xl font-mono font-bold tracking-widest text-purple-400">
+                            {event.public_pin.slice(0, 3)} {event.public_pin.slice(3)}
+                          </div>
+                        </div>
+
+                        {isAdmin && (
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={handleGeneratePin}
+                              disabled={pinActionLoading}
+                              className="gap-1.5"
+                            >
+                              <RefreshCw className={`w-3.5 h-3.5 ${pinActionLoading ? 'animate-spin' : ''}`} />
+                              <span>Rotate PIN</span>
+                            </Button>
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={handleRevokePin}
+                              disabled={pinActionLoading}
+                              className="gap-1.5"
+                            >
+                              <ShieldOff className="w-3.5 h-3.5" />
+                              <span>Revoke Access</span>
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                            Direct Shareable Public Link
+                          </label>
+                          {systemSettings?.alternative_domain && (
+                            <div className="flex items-center gap-1 bg-muted p-0.5 rounded-lg border border-border/50">
+                              <Button
+                                size="xs"
+                                variant={selectedDomainType === 'primary' ? 'default' : 'ghost'}
+                                onClick={() => setSelectedDomainType('primary')}
+                              >
+                                Primary
+                              </Button>
+                              <Button
+                                size="xs"
+                                variant={selectedDomainType === 'alternative' ? 'default' : 'ghost'}
+                                onClick={() => setSelectedDomainType('alternative')}
+                              >
+                                Alt / LAN
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Input
+                            type="text"
+                            readOnly
+                            value={`${getActiveBaseUrl()}/view/${event.public_pin}`}
+                            className="font-mono text-xs"
+                          />
+                          <Button
+                            type="button"
+                            onClick={handleCopyPublicLink}
+                            className="gap-1.5 shrink-0"
+                          >
+                            {copiedPinLink ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            <span>{copiedPinLink ? 'Copied' : 'Copy Link'}</span>
+                          </Button>
+                          <Button
+                            asChild
+                            variant="outline"
+                            size="icon"
+                            className="shrink-0"
+                          >
+                            <a
+                              href={`${getActiveBaseUrl()}/view/${event.public_pin}`}
+                              target="_blank"
+                              rel="noreferrer"
+                              title="Open in new tab"
+                            >
+                              <ExternalLink className="w-4 h-4" />
+                            </a>
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-4">
+                        Public viewer access is currently disabled. Only invited crew members can open this event.
+                      </p>
+                      {isAdmin && (
+                        <Button
+                          onClick={handleGeneratePin}
+                          disabled={pinActionLoading}
+                          className="gap-2"
+                        >
+                          <KeyRound className="w-4 h-4" />
+                          <span>{pinActionLoading ? 'Generating...' : 'Enable 6-Digit Public PIN'}</span>
+                        </Button>
+                      )}
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          )}
+
+          {/* Tab 5: Crew Roster */}
+          <TabsContent value="crew" className="space-y-6 mt-0">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-bold text-slate-100">Event Crew Members</h2>
-                <p className="text-xs text-slate-400">
+                <h2 className="text-lg font-bold text-foreground">Event Crew Members</h2>
+                <p className="text-xs text-muted-foreground">
                   Assigned crew members with role-based permissions and custom callsigns.
                 </p>
               </div>
 
               {isAdmin && (
-                <button
-                  onClick={() => setShowAddMember(true)}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-medium transition-colors"
-                >
+                <Button onClick={() => setShowAddMember(true)} className="gap-2">
                   <UserPlus className="w-4 h-4" />
                   <span>Add Crew Member</span>
-                </button>
+                </Button>
               )}
             </div>
 
             {/* Crew Table */}
-            <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl overflow-hidden shadow-xl">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#1e2638] bg-[#0c0e16] text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                    <th className="px-6 py-3">Member</th>
-                    <th className="px-6 py-3">Role</th>
-                    <th className="px-6 py-3">Callsign</th>
-                    <th className="px-6 py-3">Joined</th>
-                    {isAdmin && <th className="px-6 py-3 text-right">Actions</th>}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1e2638] text-sm">
+            <Card className="p-0 overflow-hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Member</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Callsign</TableHead>
+                    <TableHead>Joined</TableHead>
+                    {isAdmin && <TableHead className="text-right">Actions</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {event.memberships?.map((m) => (
-                    <tr key={m.id} className="hover:bg-[#151926] transition-colors">
-                      <td className="px-6 py-4">
-                        <div className="font-medium text-slate-100">
+                    <TableRow key={m.id}>
+                      <TableCell>
+                        <div className="font-medium text-foreground">
                           {m.user?.full_name || m.user?.username || 'Unknown'}
                         </div>
-                        <div className="text-xs text-slate-400 font-mono">
+                        <div className="text-xs text-muted-foreground font-mono">
                           @{m.user?.username} • {m.user?.email}
                         </div>
-                      </td>
-                      <td className="px-6 py-4">
+                      </TableCell>
+                      <TableCell>
                         <RoleBadge role={m.role} />
-                      </td>
-                      <td className="px-6 py-4 font-mono text-xs text-slate-300">
-                        {m.callsign || <span className="text-slate-600">—</span>}
-                      </td>
-                      <td className="px-6 py-4 text-xs text-slate-400">
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-foreground/80">
+                        {m.callsign || <span className="text-muted-foreground/50">—</span>}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
                         {new Date(m.created_at).toLocaleDateString()}
-                      </td>
+                      </TableCell>
                       {isAdmin && (
-                        <td className="px-6 py-4 text-right">
-                          <button
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
                             onClick={() => handleRemoveMember(m.id, m.user?.username)}
-                            className="p-1.5 rounded-lg text-slate-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                            className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                             title="Remove Member"
                           >
                             <Trash2 className="w-4 h-4" />
-                          </button>
-                        </td>
+                          </Button>
+                        </TableCell>
                       )}
-                    </tr>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+                </TableBody>
+              </Table>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </main>
 
-      {/* Add Member Modal */}
-      {showAddMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#11141f] border border-[#1e2638] w-full max-w-md rounded-2xl p-6 shadow-2xl">
-            <h3 className="text-base font-bold text-slate-100 mb-2 flex items-center gap-2">
-              <UserPlus className="w-5 h-5 text-blue-400" />
+      {/* Add Member Dialog using shadcn/ui */}
+      <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="w-5 h-5 text-primary" />
               <span>Add Crew Member</span>
-            </h3>
-            <p className="text-xs text-slate-400 mb-4">
+            </DialogTitle>
+            <DialogDescription>
               Enter the username or email of a registered crew member to assign them a role.
-            </p>
+            </DialogDescription>
+          </DialogHeader>
 
-            {inviteError && (
-              <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-                <span>{inviteError}</span>
-              </div>
-            )}
+          {inviteError && (
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{inviteError}</span>
+            </div>
+          )}
 
-            <form onSubmit={handleAddMember} className="space-y-4">
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Username or Email *
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. lights_lead or sam@event.edu"
-                  value={inviteIdentifier}
-                  onChange={(e) => setInviteIdentifier(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+          <form onSubmit={handleAddMember} className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Username or Email *
+              </label>
+              <Input
+                type="text"
+                required
+                placeholder="e.g. lights_lead or sam@event.edu"
+                value={inviteIdentifier}
+                onChange={(e) => setInviteIdentifier(e.target.value)}
+                autoFocus
+              />
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Crew Role *
-                </label>
-                <select
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as EventRole)}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 focus:outline-none focus:border-blue-500"
-                >
-                  <option value="crew">Crew (View stream, cues, walkie-talkie)</option>
-                  <option value="stage_manager">Stage Manager (Advance script cues, manage stream)</option>
-                  <option value="presenter">Presenter (Teleprompter view & cues)</option>
-                  <option value="viewer">Viewer (Read-only live stream)</option>
-                  <option value="admin">Admin (Full event & crew control)</option>
-                </select>
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Crew Role *
+              </label>
+              <select
+                value={inviteRole}
+                onChange={(e) => setInviteRole(e.target.value as EventRole)}
+                className="w-full rounded-lg border border-input bg-transparent px-2.5 py-1.5 text-sm transition-colors text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none"
+              >
+                <option value="crew" className="bg-popover text-popover-foreground">Crew (View stream, cues, walkie-talkie)</option>
+                <option value="stage_manager" className="bg-popover text-popover-foreground">Stage Manager (Advance script cues, manage stream)</option>
+                <option value="presenter" className="bg-popover text-popover-foreground">Presenter (Teleprompter view & cues)</option>
+                <option value="viewer" className="bg-popover text-popover-foreground">Viewer (Read-only live stream)</option>
+                <option value="admin" className="bg-popover text-popover-foreground">Admin (Full event & crew control)</option>
+              </select>
+            </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                  Callsign <span className="text-slate-500 font-normal">(Optional, e.g. SM-1, Audio Op)</span>
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Stage Left Op"
-                  value={inviteCallsign}
-                  onChange={(e) => setInviteCallsign(e.target.value)}
-                  className="w-full px-3 py-2 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-foreground/90 uppercase tracking-wider">
+                Callsign <span className="text-muted-foreground font-normal lowercase">(optional, e.g. SM-1, Audio Op)</span>
+              </label>
+              <Input
+                type="text"
+                placeholder="e.g. Stage Left Op"
+                value={inviteCallsign}
+                onChange={(e) => setInviteCallsign(e.target.value)}
+              />
+            </div>
 
-              <div className="flex items-center justify-end gap-3 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setShowAddMember(false)}
-                  className="px-4 py-2 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200 transition-colors"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={inviting}
-                  className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white transition-colors flex items-center gap-2"
-                >
-                  {inviting ? (
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <span>Add Member</span>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+            <DialogFooter className="gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowAddMember(false)}
+                disabled={inviting}
+              >
+                Cancel
+              </Button>
+              <Button type="submit" disabled={inviting} className="gap-2">
+                {inviting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Adding...</span>
+                  </>
+                ) : (
+                  <span>Add Member</span>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -901,8 +928,8 @@ export default function EventPage() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen flex items-center justify-center bg-[#090b10]">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
         </div>
       }
     >
