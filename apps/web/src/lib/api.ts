@@ -143,6 +143,7 @@ export interface ScriptBlock {
   cue: string | null;
   dialogue: string | null;
   notes: string | null;
+  is_performance?: boolean;
 }
 
 export interface ScriptSection {
@@ -428,6 +429,17 @@ export const api = {
     request<{ status: string; active_block_id: string }>(`/events/${eventId}/script/jump`, {
       method: 'POST',
       body: JSON.stringify({ block_id: blockId }),
+    }),
+
+  toggleBlockPerformance: (eventId: string, blockId: string) =>
+    request<ScriptBlock>(`/events/${eventId}/script/blocks/${blockId}/toggle-performance`, {
+      method: 'POST',
+    }),
+
+  updateScriptBlock: (eventId: string, blockId: string, data: Partial<ScriptBlock>) =>
+    request<ScriptBlock>(`/events/${eventId}/script/blocks/${blockId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
     }),
 
   deleteScript: (eventId: string) =>

@@ -12,6 +12,7 @@ class SubtitleResponse(BaseModel):
     start_seconds: float | None = None
     end_seconds: float | None = None
     confidence: float | None = None
+    is_music: bool = False
     recording_id: str | None = None
     created_at: datetime
 

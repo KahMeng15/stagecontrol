@@ -436,6 +436,7 @@ class TranscriptionService:
                                     start_seconds=start_sec,
                                     end_seconds=end_sec,
                                     confidence=0.9,
+                                    is_music=bool(is_chunk_music),
                                     created_at=now
                                 )
                                 db.add(sub)

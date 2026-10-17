@@ -16,6 +16,7 @@ from app.schemas.script import (
     ScriptResponse,
     ScriptSectionResponse,
     ScriptBlockResponse,
+    ScriptBlockUpdate,
     ScriptTextImportRequest,
     ScriptJumpRequest,
 )
@@ -182,6 +183,82 @@ async def delete_event_script(
 
     return {"status": "ok", "message": "Script removed"}
 
+@router.post("/blocks/{block_id}/toggle-performance", response_model=ScriptBlockResponse)
+async def toggle_block_performance(
+    event_id: str,
+    block_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Toggles persistent performance/musical act state for a script line."""
+    membership = get_event_membership(db, event_id, current_user)
+    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+
+    block = db.query(ScriptBlock).join(ScriptSection).join(Script).filter(
+        Script.event_id == event_id,
+        ScriptBlock.id == block_id
+    ).first()
+    if not block:
+        raise HTTPException(status_code=404, detail="Script block not found")
+
+    block.is_performance = not bool(block.is_performance)
+    db.commit()
+    db.refresh(block)
+
+    # Broadcast update so all live viewers immediately reflect the persistent performance state
+    await transcription_service.broadcast_subtitle(event_id, {
+        "type": "script_updated",
+        "event_id": event_id,
+        "block_id": block.id,
+        "is_performance": block.is_performance
+    })
+
+    return block
+
+@router.patch("/blocks/{block_id}", response_model=ScriptBlockResponse)
+async def update_script_block(
+    event_id: str,
+    block_id: str,
+    payload: ScriptBlockUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Updates fields (including is_performance) on a script block."""
+    membership = get_event_membership(db, event_id, current_user)
+    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+
+    block = db.query(ScriptBlock).join(ScriptSection).join(Script).filter(
+        Script.event_id == event_id,
+        ScriptBlock.id == block_id
+    ).first()
+    if not block:
+        raise HTTPException(status_code=404, detail="Script block not found")
+
+    if payload.is_performance is not None:
+        block.is_performance = payload.is_performance
+    if payload.speaker is not None:
+        block.speaker = payload.speaker
+    if payload.cue is not None:
+        block.cue = payload.cue
+    if payload.dialogue is not None:
+        block.dialogue = payload.dialogue
+    if payload.notes is not None:
+        block.notes = payload.notes
+
+    db.commit()
+    db.refresh(block)
+
+    await transcription_service.broadcast_subtitle(event_id, {
+        "type": "script_updated",
+        "event_id": event_id,
+        "block_id": block.id,
+        "is_performance": block.is_performance
+    })
+
+    return block
+
 def _persist_parsed_script(db: Session, event_id: str, parsed_data: dict) -> ScriptResponse:
     """Helper to save parsed sections and blocks to SQLite database."""
     # Archive/deactivate previous scripts
@@ -219,7 +296,8 @@ def _persist_parsed_script(db: Session, event_id: str, parsed_data: dict) -> Scr
                 speaker=blk_data.get("speaker"),
                 cue=blk_data.get("cue"),
                 dialogue=blk_data.get("dialogue"),
-                notes=blk_data.get("notes")
+                notes=blk_data.get("notes"),
+                is_performance=bool(blk_data.get("is_performance", False))
             )
             db.add(block)
             total_blocks += 1

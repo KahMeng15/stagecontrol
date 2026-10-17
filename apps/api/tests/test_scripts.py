@@ -276,5 +276,37 @@ def test_music_recognition_and_anti_jump():
     assert song_advance is not None
     assert song_advance["id"] == "b2"
 
+    # 4. Explicitly flagged is_performance=True block is recognized even with neutral text
+    custom_perf_block = {"id": "b5", "order_index": 5, "speaker": "Actor", "dialogue": "Spoken line without keywords", "cue": "", "is_performance": True}
+    assert is_music_or_performance_block(custom_perf_block) is True
 
 
+def test_toggle_block_performance_endpoint(client, auth_headers, test_event):
+    # Import a simple script first
+    import_resp = client.post(
+        f"/api/events/{test_event}/script/import-text",
+        headers=auth_headers,
+        json={"text": "Narrator\tOpening remarks\tWelcome to the show\nBand\tLive overture\tInstrumental performance"}
+    )
+    assert import_resp.status_code == 200
+    data = import_resp.json()
+    first_block = data["sections"][0]["blocks"][0]
+    block_id = first_block["id"]
+    initial_perf = first_block["is_performance"]
+
+    # Toggle performance flag
+    toggle_resp = client.post(
+        f"/api/events/{test_event}/script/blocks/{block_id}/toggle-performance",
+        headers=auth_headers
+    )
+    assert toggle_resp.status_code == 200
+    toggled_block = toggle_resp.json()
+    assert toggled_block["is_performance"] != initial_perf
+
+    # Toggle back
+    toggle_resp2 = client.post(
+        f"/api/events/{test_event}/script/blocks/{block_id}/toggle-performance",
+        headers=auth_headers
+    )
+    assert toggle_resp2.status_code == 200
+    assert toggle_resp2.json()["is_performance"] == initial_perf

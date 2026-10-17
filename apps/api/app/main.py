@@ -29,6 +29,25 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Alembic auto-migration failed ({e}), falling back to Base.metadata.create_all.")
         Base.metadata.create_all(bind=engine)
 
+    # Safe lightweight SQLite column migrations for new attributes
+    try:
+        from sqlalchemy import inspect, text
+        with engine.connect() as conn:
+            insp = inspect(conn)
+            tables = insp.get_table_names()
+            if "script_blocks" in tables:
+                block_cols = [c["name"] for c in insp.get_columns("script_blocks")]
+                if "is_performance" not in block_cols:
+                    conn.execute(text("ALTER TABLE script_blocks ADD COLUMN is_performance BOOLEAN NOT NULL DEFAULT 0"))
+                    conn.commit()
+            if "subtitles" in tables:
+                sub_cols = [c["name"] for c in insp.get_columns("subtitles")]
+                if "is_music" not in sub_cols:
+                    conn.execute(text("ALTER TABLE subtitles ADD COLUMN is_music BOOLEAN NOT NULL DEFAULT 0"))
+                    conn.commit()
+    except Exception as col_err:
+        logger.warning(f"Column check / alter table note: {col_err}")
+
     # Start the automated stream transcription monitor
     await transcription_service.start_monitor()
 

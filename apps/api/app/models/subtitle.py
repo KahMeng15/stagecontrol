@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -15,6 +15,7 @@ class Subtitle(Base):
     start_seconds = Column(Float, nullable=True)
     end_seconds = Column(Float, nullable=True)
     confidence = Column(Float, nullable=True)
+    is_music = Column(Boolean, default=False, nullable=False)
 
     recording_id = Column(String(36), ForeignKey("recordings.id", ondelete="SET NULL"), nullable=True, index=True)
 

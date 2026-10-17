@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -41,5 +41,6 @@ class ScriptBlock(Base):
     cue = Column(String(100), nullable=True)     # e.g. "LIGHTS UP", "MIC 1 LIVE", "SLIDE 4"
     dialogue = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
+    is_performance = Column(Boolean, default=False, nullable=False)
 
     section = relationship("ScriptSection", back_populates="blocks")

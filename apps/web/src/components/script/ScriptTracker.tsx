@@ -86,6 +86,7 @@ function isMusicPerformance(text?: string | null, isMusicFlag?: boolean | null):
 
 function isPerformanceBlock(blk?: ScriptBlock | null): boolean {
   if (!blk) return false;
+  if (blk.is_performance) return true;
   const cue = (blk.cue || '').toLowerCase();
   const diag = (blk.dialogue || '').toLowerCase();
   const speaker = (blk.speaker || '').toLowerCase();
@@ -527,6 +528,9 @@ export default function ScriptTracker({
         setActivePerformanceName(getPerformanceName(targetPerfBlock));
       }
       return;
+    } else if (currIdx >= 0 && isPerformanceBlock(allBlocks[currIdx])) {
+      setIsMusicActive(true);
+      setActivePerformanceName(getPerformanceName(allBlocks[currIdx]));
     } else {
       setIsMusicActive(false);
     }
@@ -654,12 +658,19 @@ export default function ScriptTracker({
                     lastMatchTimeRef.current = Date.now();
                   }
                   setActivePerformanceName(getPerformanceName(targetPerfBlock));
+                  // If not yet persistently marked, save it to the database so it is remembered
+                  if (!targetPerfBlock.is_performance && isSMOrAdmin) {
+                    api.toggleBlockPerformance(eventId, targetPerfBlock.id).catch(() => {});
+                  }
                 }
 
                 if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
                 musicTimerRef.current = setTimeout(() => {
-                  setIsMusicActive(false);
-                }, 15000);
+                  const activeBlk = allBlocksRef.current.find((b) => b.id === activeBlockIdRef.current);
+                  if (!isPerformanceBlock(activeBlk)) {
+                    setIsMusicActive(false);
+                  }
+                }, 20000);
                 return;
               }
 
@@ -847,6 +858,29 @@ export default function ScriptTracker({
       } catch (err) {
         console.error('Failed to broadcast script jump:', err);
       }
+    }
+  };
+
+  // Toggle persistent performance state for a script line
+  const handleToggleBlockPerformance = async (e: React.MouseEvent, block: ScriptBlock) => {
+    e.stopPropagation();
+    if (!isSMOrAdmin) return;
+    try {
+      const updated = await api.toggleBlockPerformance(eventId, block.id);
+      setScript((prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          sections: prev.sections.map((sec) => ({
+            ...sec,
+            blocks: sec.blocks.map((b) =>
+              b.id === block.id ? { ...b, is_performance: updated.is_performance } : b
+            ),
+          })),
+        };
+      });
+    } catch (err) {
+      console.error('Failed to toggle block performance:', err);
     }
   };
 
@@ -1327,6 +1361,18 @@ export default function ScriptTracker({
                     <span className="text-xs text-muted-foreground/60 italic select-none">—</span>
                   )}
 
+                  {/* Persistent Performance Act Badge */}
+                  {isPerformanceBlock(block) && (
+                    <span
+                      onClick={(e) => handleToggleBlockPerformance(e, block)}
+                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-sm cursor-pointer hover:bg-orange-500/25 transition-all"
+                      title={isSMOrAdmin ? "Performance line (Click to toggle)" : "Live Song / Performance Act"}
+                    >
+                      <Music className="w-2.5 h-2.5 text-orange-400 shrink-0" />
+                      <span>PERF</span>
+                    </span>
+                  )}
+
                   {isPlaybackMode && blockTimestamps.has(block.id) && (
                     <Button
                       type="button"
@@ -1386,6 +1432,21 @@ export default function ScriptTracker({
                     ) : !block.notes ? (
                       <span className="text-xs text-muted-foreground/40 select-none">—</span>
                     ) : null}
+
+                    {isSMOrAdmin && (
+                      <button
+                        type="button"
+                        onClick={(e) => handleToggleBlockPerformance(e, block)}
+                        className={`p-1 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
+                          block.is_performance
+                            ? 'text-orange-400 hover:text-orange-300'
+                            : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400'
+                        }`}
+                        title={block.is_performance ? "Remove performance tag" : "Tag line as performance act / musical number"}
+                      >
+                        <Music className="w-3 h-3" />
+                      </button>
+                    )}
                   </div>
 
                   {block.notes && (

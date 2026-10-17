@@ -3,6 +3,56 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 import docx
 
+def is_music_text(text: str) -> bool:
+    """Detects whether text contains musical notation, singing/music tags, or known music hallucination phrases."""
+    if not text:
+        return False
+    stripped = text.strip()
+    lower = stripped.lower()
+    music_keywords = [
+        "[music]", "(music)", "{music}",
+        "[singing]", "(singing)", "{singing}",
+        "[song]", "(song)", "{song}",
+        "[instrumental]", "(instrumental)", "{instrumental}",
+        "thanks for watching", "thank you for watching",
+        "to this dream", "down your face",
+        "try to fix you", "stuck in reverse",
+        "chopin",
+    ]
+    if any(kw in lower for kw in music_keywords):
+        return True
+
+    if any(ch in stripped for ch in ["♪", "♫", "♩", "♬", "🎶"]):
+        return True
+
+    return False
+
+
+def is_music_or_performance_block(blk: Any) -> bool:
+    """Checks if a script block represents a musical performance, song, dance, video, or audio interlude."""
+    if isinstance(blk, dict) and blk.get("is_performance") is not None:
+        if blk.get("is_performance"):
+            return True
+    elif hasattr(blk, "is_performance") and getattr(blk, "is_performance", False):
+        return True
+
+    cue = (getattr(blk, "cue", None) or "") if not isinstance(blk, dict) else (blk.get("cue") or "")
+    diag = (getattr(blk, "dialogue", None) or "") if not isinstance(blk, dict) else (blk.get("dialogue") or "")
+    speaker = (getattr(blk, "speaker", None) or "") if not isinstance(blk, dict) else (blk.get("speaker") or "")
+
+    cue_speaker = f"{cue} {speaker}".lower()
+    cue_pattern = r'\b(audio|music|song|songs|track|tracks|soundtrack|soundtracks|playback|singing|sing|band|choir|anthem|dance|dancing|performance|dikir|silat|walk-in|video|montage|instrumental)\b'
+    if re.search(cue_pattern, cue_speaker, re.I):
+        return True
+
+    diag_pattern = r'\b(dance|dancing|song|songs|singing|anthem|dikir|silat|walk-in|soundtrack)\b'
+    if diag and re.search(diag_pattern, diag.lower(), re.I):
+        if speaker and len(diag) > 40:
+            return False
+        return True
+
+    return False
+
 def parse_docx_bytes(file_bytes: bytes, default_title: str = "Imported Script") -> Dict[str, Any]:
     """
     Parses a Word (.docx) document into structured sections and blocks.
@@ -104,12 +154,14 @@ def parse_docx_bytes(file_bytes: bytes, default_title: str = "Imported Script") 
             cue = c1
             dialogue = c2
 
+            is_perf = is_music_or_performance_block({"speaker": speaker, "cue": cue, "dialogue": dialogue})
             current_section["blocks"].append({
                 "order_index": total_block_index,
                 "speaker": speaker if speaker else None,
                 "cue": cue if cue else None,
                 "dialogue": dialogue if dialogue else None,
-                "notes": None
+                "notes": None,
+                "is_performance": is_perf
             })
             total_block_index += 1
     else:
@@ -197,12 +249,14 @@ def parse_raw_text(text: str, default_title: str = "Imported Script") -> Dict[st
                 diag = parts[1]
                 cue = ""
 
+            is_perf = is_music_or_performance_block({"speaker": spk, "cue": cue, "dialogue": diag})
             current_section["blocks"].append({
                 "order_index": total_block_index,
                 "speaker": spk or None,
                 "cue": cue or None,
                 "dialogue": diag or None,
-                "notes": None
+                "notes": None,
+                "is_performance": is_perf
             })
             total_block_index += 1
         else:
@@ -239,12 +293,14 @@ def _parse_single_line(line: str, order_index: int) -> Dict[str, Any]:
         speaker = spk_match.group(1).strip()
         dialogue = spk_match.group(2).strip()
 
+    is_perf = is_music_or_performance_block({"speaker": speaker, "cue": cue, "dialogue": dialogue})
     return {
         "order_index": order_index,
         "speaker": speaker,
         "cue": cue,
         "dialogue": dialogue,
-        "notes": None
+        "notes": None,
+        "is_performance": is_perf
     }
 
 
@@ -344,51 +400,6 @@ class ScriptMatchResult(tuple):
         self.block = block
         self.confidence = confidence
         self.is_local = is_local
-
-
-def is_music_text(text: str) -> bool:
-    """Detects whether text contains musical notation, singing/music tags, or known music hallucination phrases."""
-    if not text:
-        return False
-    stripped = text.strip()
-    lower = stripped.lower()
-    music_keywords = [
-        "[music]", "(music)", "{music}",
-        "[singing]", "(singing)", "{singing}",
-        "[song]", "(song)", "{song}",
-        "[instrumental]", "(instrumental)", "{instrumental}",
-        "thanks for watching", "thank you for watching",
-        "to this dream", "down your face",
-        "try to fix you", "stuck in reverse",
-        "chopin",
-    ]
-    if any(kw in lower for kw in music_keywords):
-        return True
-
-    if any(ch in stripped for ch in ["♪", "♫", "♩", "♬", "🎶"]):
-        return True
-
-    return False
-
-
-def is_music_or_performance_block(blk: Any) -> bool:
-    """Checks if a script block represents a musical performance, song, dance, video, or audio interlude."""
-    cue = (getattr(blk, "cue", None) or "") if not isinstance(blk, dict) else (blk.get("cue") or "")
-    diag = (getattr(blk, "dialogue", None) or "") if not isinstance(blk, dict) else (blk.get("dialogue") or "")
-    speaker = (getattr(blk, "speaker", None) or "") if not isinstance(blk, dict) else (blk.get("speaker") or "")
-
-    cue_speaker = f"{cue} {speaker}".lower()
-    cue_pattern = r'\b(audio|music|song|songs|track|tracks|soundtrack|soundtracks|playback|singing|sing|band|choir|anthem|dance|dancing|performance|dikir|silat|walk-in|video|montage|instrumental)\b'
-    if re.search(cue_pattern, cue_speaker, re.I):
-        return True
-
-    diag_pattern = r'\b(dance|dancing|song|songs|singing|anthem|dikir|silat|walk-in|soundtrack)\b'
-    if diag and re.search(diag_pattern, diag.lower(), re.I):
-        if speaker and len(diag) > 40:
-            return False
-        return True
-
-    return False
 
 
 def match_spoken_text_to_script(

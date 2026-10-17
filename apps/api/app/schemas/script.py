@@ -8,6 +8,14 @@ class ScriptBlockBase(BaseModel):
     cue: Optional[str] = None
     dialogue: Optional[str] = None
     notes: Optional[str] = None
+    is_performance: bool = False
+
+class ScriptBlockUpdate(BaseModel):
+    is_performance: Optional[bool] = None
+    speaker: Optional[str] = None
+    cue: Optional[str] = None
+    dialogue: Optional[str] = None
+    notes: Optional[str] = None
 
 class ScriptBlockResponse(ScriptBlockBase):
     id: str
