@@ -815,17 +815,21 @@ export default function ScriptTracker({
   // Smooth auto-scroll directly inside the script container
   useEffect(() => {
     if (autoFollow && activeBlockRef.current && listContainerRef.current) {
-      const container = listContainerRef.current;
-      const element = activeBlockRef.current;
-      const containerRect = container.getBoundingClientRect();
-      const elementRect = element.getBoundingClientRect();
-      const relativeTop = elementRect.top - containerRect.top;
-      const targetScrollTop =
-        container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: 'smooth',
+      const frameId = requestAnimationFrame(() => {
+        if (!activeBlockRef.current || !listContainerRef.current) return;
+        const container = listContainerRef.current;
+        const element = activeBlockRef.current;
+        const containerRect = container.getBoundingClientRect();
+        const elementRect = element.getBoundingClientRect();
+        const relativeTop = elementRect.top - containerRect.top;
+        const targetScrollTop =
+          container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
+        container.scrollTo({
+          top: Math.max(0, targetScrollTop),
+          behavior: 'smooth',
+        });
       });
+      return () => cancelAnimationFrame(frameId);
     }
   }, [activeBlockId, autoFollow]);
 

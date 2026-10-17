@@ -187,8 +187,8 @@ export function LivePlayer({
               });
 
               // If user is following live, keep view anchored to top (newest)
-              if (isLiveFollowRef.current) {
-                transcriptContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+              if (isLiveFollowRef.current && transcriptContainerRef.current) {
+                transcriptContainerRef.current.scrollTop = 0;
               } else {
                 setUnreadCount((c) => c + 1);
               }

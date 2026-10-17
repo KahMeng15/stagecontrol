@@ -44,6 +44,47 @@ function playRadioChirp(ctx: AudioContext, type: 'start' | 'end') {
   }
 }
 
+// AudioWorklet processor code for background audio capture (eliminates ScriptProcessorNode deprecation)
+const MIC_PROCESSOR_CODE = `
+class WalkieMicProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = new Float32Array(2048);
+    this.offset = 0;
+  }
+  process(inputs) {
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const channel = input[0];
+
+    let i = 0;
+    while (i < channel.length) {
+      const needed = 2048 - this.offset;
+      const toCopy = Math.min(needed, channel.length - i);
+      this.buffer.set(channel.subarray(i, i + toCopy), this.offset);
+      this.offset += toCopy;
+      i += toCopy;
+
+      if (this.offset === 2048) {
+        this.port.postMessage(this.buffer);
+        this.offset = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('walkie-mic-processor', WalkieMicProcessor);
+`;
+
+let micWorkletUrl: string | null = null;
+function getMicWorkletUrl(): string {
+  if (!micWorkletUrl && typeof window !== 'undefined') {
+    const blob = new Blob([MIC_PROCESSOR_CODE], { type: 'application/javascript' });
+    micWorkletUrl = URL.createObjectURL(blob);
+  }
+  return micWorkletUrl || '';
+}
+
 export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [voiceRoom, setVoiceRoom] = useState<string>('');
@@ -69,11 +110,15 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
   const audioCtxRef = useRef<AudioContext | null>(null);
   const playbackGainRef = useRef<GainNode | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const scriptNodeRef = useRef<ScriptProcessorNode | null>(null);
+  const micNodeRef = useRef<AudioNode | null>(null);
   const currentTransmissionIdRef = useRef<string | null>(null);
   const nextScheduledTimeRef = useRef<number>(0);
   const isTransmittingRef = useRef<boolean>(false);
   isTransmittingRef.current = isTransmitting;
+
+  // Throttling refs to prevent React state flood on high-frequency audio frames
+  const lastAudioLevelTimeRef = useRef<number>(0);
+  const lastIncomingAudioLevelTimeRef = useRef<number>(0);
 
   // Initialize playback AudioContext & GainNode
   const getAudioContext = useCallback((): AudioContext => {
@@ -147,10 +192,6 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
       playRadioChirp(audioCtx, 'start');
 
       const source = audioCtx.createMediaStreamSource(stream);
-      // ScriptProcessor with buffer size 2048 (~128ms slices at 16kHz)
-      const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
-      scriptNodeRef.current = scriptNode;
-
       const tid = crypto.randomUUID();
       currentTransmissionIdRef.current = tid;
 
@@ -164,12 +205,11 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
 
       setIsTransmitting(true);
 
-      scriptNode.onaudioprocess = (event) => {
+      const handleOutgoingSlice = (inputData: Float32Array) => {
         if (!isTransmittingRef.current || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
           return;
         }
 
-        const inputData = event.inputBuffer.getChannelData(0);
         let sumSquares = 0;
         const pcm16 = new Int16Array(inputData.length);
 
@@ -179,9 +219,13 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
           sumSquares += s * s;
         }
 
-        // Live RMS audio level (0.0 to 1.0)
-        const rms = Math.sqrt(sumSquares / inputData.length);
-        setAudioLevel(Math.min(1.0, rms * 4.5));
+        // Throttle UI VU meter state update to ~15fps (every 65ms) to prevent UI thread lag
+        const now = performance.now();
+        if (now - lastAudioLevelTimeRef.current > 65) {
+          lastAudioLevelTimeRef.current = now;
+          const rms = Math.sqrt(sumSquares / inputData.length);
+          setAudioLevel(Math.min(1.0, rms * 4.5));
+        }
 
         // Format packet: 36 bytes ASCII UUID header + Int16 PCM samples
         const headerBytes = new TextEncoder().encode(tid);
@@ -192,8 +236,35 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
         wsRef.current.send(packet.buffer);
       };
 
-      source.connect(scriptNode);
-      scriptNode.connect(audioCtx.destination);
+      // Prefer modern AudioWorkletNode; fall back to ScriptProcessorNode if unsupported
+      if (audioCtx.audioWorklet) {
+        try {
+          await audioCtx.audioWorklet.addModule(getMicWorkletUrl());
+          const workletNode = new AudioWorkletNode(audioCtx, 'walkie-mic-processor');
+          micNodeRef.current = workletNode;
+          workletNode.port.onmessage = (event) => {
+            handleOutgoingSlice(event.data);
+          };
+          source.connect(workletNode);
+          workletNode.connect(audioCtx.destination);
+        } catch {
+          const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+          micNodeRef.current = scriptNode;
+          scriptNode.onaudioprocess = (event) => {
+            handleOutgoingSlice(event.inputBuffer.getChannelData(0));
+          };
+          source.connect(scriptNode);
+          scriptNode.connect(audioCtx.destination);
+        }
+      } else {
+        const scriptNode = audioCtx.createScriptProcessor(2048, 1, 1);
+        micNodeRef.current = scriptNode;
+        scriptNode.onaudioprocess = (event) => {
+          handleOutgoingSlice(event.inputBuffer.getChannelData(0));
+        };
+        source.connect(scriptNode);
+        scriptNode.connect(audioCtx.destination);
+      }
     } catch (err) {
       console.error('Failed to access microphone for walkie-talkie:', err);
       setIsTransmitting(false);
@@ -215,9 +286,9 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
       }));
     }
 
-    if (scriptNodeRef.current) {
-      scriptNodeRef.current.disconnect();
-      scriptNodeRef.current = null;
+    if (micNodeRef.current) {
+      micNodeRef.current.disconnect();
+      micNodeRef.current = null;
     }
 
     if (mediaStreamRef.current) {
@@ -290,8 +361,12 @@ export function useWalkieTalkie({ eventId, enabled = true }: UseWalkieTalkieProp
               sumSq += val * val;
             }
 
-            const rms = Math.sqrt(sumSq / pcm16.length);
-            setIncomingAudioLevel(Math.min(1.0, rms * 4.5));
+            const now = performance.now();
+            if (now - lastIncomingAudioLevelTimeRef.current > 65) {
+              lastIncomingAudioLevelTimeRef.current = now;
+              const rms = Math.sqrt(sumSq / pcm16.length);
+              setIncomingAudioLevel(Math.min(1.0, rms * 4.5));
+            }
 
             // Schedule audio playback seamlessly
             const ctx = getAudioContext();
