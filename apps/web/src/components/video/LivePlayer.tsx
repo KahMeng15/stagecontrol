@@ -18,7 +18,6 @@ import {
   Clock,
   Plus,
   Trash2,
-  Subtitles,
   FileText,
   Sparkles,
   Mic,
@@ -70,7 +69,7 @@ export function LivePlayer({
   // Live Subtitles & Closed Captions (Mesolitica Malaysian Whisper)
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [activeCaption, setActiveCaption] = useState<string | null>(null);
-  const [showCC, setShowCC] = useState<boolean>(true);
+  const [activeSubtitleId, setActiveSubtitleId] = useState<string | null>(null);
   const [showTranscriptLog, setShowTranscriptLog] = useState<boolean>(true);
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
   const [transcriptSearch, setTranscriptSearch] = useState<string>('');
@@ -152,6 +151,7 @@ export function LivePlayer({
               setIsTranscribing(Boolean(data.is_transcribing));
             } else if (data.type === 'subtitle') {
               setActiveCaption(data.text);
+              setActiveSubtitleId(data.id || data.text);
               setIsTranscribing(true);
               setSubtitles((prev) => {
                 // Top newest, bottom oldest: prepend data to front
@@ -166,13 +166,14 @@ export function LivePlayer({
                 setUnreadCount((c) => c + 1);
               }
 
-              // Automatically clear caption after 4.5 seconds if speech pauses
+              // Automatically clear active highlight after 5 seconds if speech pauses
               if (captionTimeoutRef.current) {
                 clearTimeout(captionTimeoutRef.current);
               }
               captionTimeoutRef.current = setTimeout(() => {
                 setActiveCaption(null);
-              }, 4500);
+                setActiveSubtitleId(null);
+              }, 5000);
             }
           } catch {}
         };
@@ -256,6 +257,7 @@ export function LivePlayer({
       await api.clearSubtitles(eventId);
       setSubtitles([]);
       setActiveCaption(null);
+      setActiveSubtitleId(null);
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to clear subtitles');
     }
@@ -345,22 +347,6 @@ export function LivePlayer({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Subtitles / CC Button */}
-          <Button
-            type="button"
-            size="xs"
-            variant={showCC ? 'default' : 'outline'}
-            onClick={() => setShowCC(!showCC)}
-            className="gap-1 text-[11px]"
-            title={showCC ? 'Hide Subtitles (CC)' : 'Show Live Subtitles (CC)'}
-          >
-            <Subtitles className="w-3.5 h-3.5" />
-            <span>CC</span>
-            {isTranscribing && (
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            )}
-          </Button>
-
           {/* Transcript Feed Drawer Toggle */}
           <Button
             type="button"
@@ -415,13 +401,11 @@ export function LivePlayer({
 
           {/* Live / Offline Status Badge */}
           {isLive ? (
-            <Badge variant="destructive" className="gap-1.5 font-mono text-[10px] uppercase font-bold tracking-wider">
-              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live" />
+            <Badge variant="destructive" className="font-mono text-[10px] uppercase font-bold tracking-wider">
               <span>LIVE • REC</span>
             </Badge>
           ) : (
-            <Badge variant="secondary" className="gap-1 text-muted-foreground font-mono text-[10px]">
-              <span className="w-1.5 h-1.5 rounded-full bg-muted-foreground" />
+            <Badge variant="secondary" className="text-muted-foreground font-mono text-[10px]">
               <span>OFF AIR</span>
             </Badge>
           )}
@@ -504,54 +488,43 @@ export function LivePlayer({
           />
         ) : null}
 
-        {/* Closed Captions Live Overlay Pill */}
-        {showCC && activeCaption && (
-          <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-30 max-w-[90%] md:max-w-[80%] pointer-events-none transition-all duration-200 animate-in fade-in slide-in-from-bottom-2">
-            <div className="bg-black/90 backdrop-blur-md border border-purple-500/40 text-white px-4 py-2 rounded-xl shadow-2xl flex items-center gap-2.5 text-center">
-              <span className={`w-2 h-2 rounded-full shrink-0 ${activeCaption.includes('♪') ? 'bg-indigo-400 animate-ping' : 'bg-emerald-400 animate-pulse'}`} />
-              <span className={`text-xs sm:text-sm md:text-base font-semibold tracking-wide drop-shadow-md select-none ${activeCaption.includes('♪') ? 'text-indigo-200 italic' : 'text-slate-100'}`}>
-                {activeCaption}
-              </span>
-            </div>
-          </div>
-        )}
-
         {/* Off Air / Waiting for OBS Overlay */}
         {!isLive && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-gradient-to-b from-[#0a0d14] to-[#040608]">
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-card/95 backdrop-blur-sm">
             <div className="relative mb-4">
-              <div className="w-16 h-16 rounded-3xl bg-blue-600/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
-                <Radio className="w-8 h-8 animate-pulse text-blue-400" />
+              <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                <Radio className="w-8 h-8 text-primary" />
               </div>
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-slate-600 rounded-full border-2 border-[#090b10]" />
+              <span className="absolute -top-1 -right-1 w-3 h-3 bg-muted-foreground/60 rounded-full border-2 border-background" />
             </div>
 
-            <h3 className="text-base font-bold text-slate-100">Waiting for OBS Live Broadcast</h3>
-            <p className="text-xs text-slate-400 max-w-md mt-1 mb-6">
+            <h3 className="text-base font-bold text-foreground">Waiting for OBS Live Broadcast</h3>
+            <p className="text-xs text-muted-foreground max-w-md mt-1 mb-6 leading-relaxed">
               Connect OBS Studio or any RTMP software to start streaming. The server will automatically start broadcasting live playback, fMP4 recording, and Malaysian Whisper speech transcription.
             </p>
 
             {isSMOrAdmin ? (
               <div className="flex flex-wrap items-center justify-center gap-3">
-                <button
+                <Button
                   onClick={onOpenStreamSetup}
-                  className="px-4 py-2 text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors shadow-lg shadow-blue-600/20 flex items-center gap-2"
+                  className="gap-2 shadow-sm text-xs font-semibold"
                 >
                   <Tv className="w-4 h-4" />
                   <span>View OBS Setup & Stream Key</span>
-                </button>
+                </Button>
                 {streamStatus?.rtmp_url && (
-                  <button
+                  <Button
+                    variant="outline"
                     onClick={handleCopyRtmp}
-                    className="px-3 py-2 text-xs font-medium bg-[#1a2030] hover:bg-[#222b40] text-slate-300 rounded-xl transition-colors flex items-center gap-1.5"
+                    className="gap-1.5 text-xs font-medium"
                   >
-                    {copiedRtmp ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                    {copiedRtmp ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
                     <span>{copiedRtmp ? 'Copied RTMP URL' : 'Copy RTMP URL'}</span>
-                  </button>
+                  </Button>
                 )}
               </div>
             ) : (
-              <div className="px-3 py-1.5 rounded-lg bg-[#11141f] border border-[#1e2638] text-[11px] text-slate-400">
+              <div className="px-3 py-1.5 rounded-lg bg-muted border border-border text-xs text-muted-foreground">
                 Stage manager or stream operator has not started broadcast yet.
               </div>
             )}
@@ -561,28 +534,28 @@ export function LivePlayer({
 
       {/* Footer Info Bar */}
       {isLive && streamStatus && (
-        <div className="px-4 py-2 bg-[#0e111a] border-t border-[#1e2638] flex flex-wrap items-center justify-between text-[11px] text-slate-400">
+        <div className="px-4 py-2 bg-muted/40 border-t border-border/60 flex flex-wrap items-center justify-between text-[11px] text-muted-foreground">
           <div className="flex items-center gap-3">
-            <span className="font-mono text-emerald-400">
+            <Badge variant="outline" className="font-mono text-emerald-500 bg-emerald-500/10 border-emerald-500/20 text-[10px]">
               {playerMode === 'webrtc' ? 'Ultra-Low Latency (~200ms)' : 'Buffered HLS (Stereo Audio)'}
-            </span>
+            </Badge>
             {streamStatus.tracks.length > 0 && (
-              <span className="text-slate-500">
-                Codecs: <strong className="text-slate-300">{streamStatus.tracks.join(' + ')}</strong>
+              <span>
+                Codecs: <strong className="text-foreground">{streamStatus.tracks.join(' + ')}</strong>
               </span>
             )}
           </div>
 
           <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1 text-purple-300">
-              <Sparkles className="w-3 h-3 text-purple-400" />
+            <span className="flex items-center gap-1 text-foreground">
+              <Sparkles className="w-3 h-3 text-primary" />
               <span>AI Subtitles:</span>
-              <strong className={isTranscribing ? 'text-emerald-400' : 'text-slate-400'}>
+              <Badge variant={isTranscribing ? "secondary" : "outline"} className={`text-[10px] ${isTranscribing ? 'text-emerald-500 font-bold' : 'text-muted-foreground'}`}>
                 {isTranscribing ? 'Active' : 'Idle'}
-              </strong>
+              </Badge>
             </span>
             <span>
-              Bytes Ingested: <strong className="font-mono text-slate-300">{(streamStatus.bytes_received / (1024 * 1024)).toFixed(1)} MB</strong>
+              Bytes Ingested: <strong className="font-mono text-foreground">{(streamStatus.bytes_received / (1024 * 1024)).toFixed(1)} MB</strong>
             </span>
           </div>
         </div>
@@ -604,56 +577,59 @@ export function LivePlayer({
               setUnreadCount(0);
             }
           }}
-          className="bg-[#0b0e17] border-t border-[#1e2638] p-4 max-h-72 overflow-y-auto relative"
+          className="bg-card border-t border-border/60 p-4 max-h-72 overflow-y-auto relative"
         >
           {/* Floating Go to Now button when user scrolled away */}
           {!isLiveFollow && (
             <div className="sticky top-0 z-30 flex justify-center pb-2 pointer-events-none">
-              <button
+              <Button
                 type="button"
+                size="sm"
                 onClick={() => {
                   setIsLiveFollow(true);
                   isLiveFollowRef.current = true;
                   setUnreadCount(0);
                   transcriptContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
                 }}
-                className="pointer-events-auto flex items-center gap-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-full shadow-xl shadow-purple-950/80 text-[11px] font-bold border border-purple-400/40 transition-all hover:scale-105 animate-in fade-in slide-in-from-top-1"
+                className="pointer-events-auto h-7 px-3 rounded-full text-[11px] font-semibold gap-1.5 shadow-lg shadow-primary/20 animate-in fade-in slide-in-from-top-1"
               >
-                <ArrowDown className="w-3 h-3 text-white animate-bounce" />
+                <ArrowDown className="w-3 h-3 animate-bounce" />
                 <span>Go to Now</span>
                 {unreadCount > 0 && (
-                  <span className="px-1.5 py-0.2 bg-white/20 text-white rounded-full font-mono text-[10px]">
+                  <Badge variant="secondary" className="px-1.5 py-0 h-4 text-[10px] font-mono">
                     +{unreadCount}
-                  </span>
+                  </Badge>
                 )}
-              </button>
+              </Button>
             </div>
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-purple-400" />
-              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+            <div className="flex flex-wrap items-center gap-2">
+              <FileText className="w-4 h-4 text-primary" />
+              <span className="text-xs font-bold text-foreground uppercase tracking-wider">
                 Live Transcript ({subtitles.length})
               </span>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/15 border border-purple-500/30 text-purple-300 font-medium flex items-center gap-1">
-                <Sparkles className="w-3 h-3 text-purple-400" />
+              <Badge variant="secondary" className="text-[10px] gap-1 font-normal">
+                <Sparkles className="w-3 h-3 text-primary" />
                 <span>Mesolitica Malaysian Whisper</span>
-              </span>
+              </Badge>
               {isTranscribing ? (
-                <span className="text-[10px] px-1.5 py-0.5 bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 rounded font-semibold flex items-center gap-1 animate-pulse">
+                <Badge variant="outline" className="text-[10px] gap-1 bg-emerald-500/15 border-emerald-500/30 text-emerald-400 font-semibold animate-pulse">
                   <Mic className="w-2.5 h-2.5" />
                   <span>LISTENING</span>
-                </span>
+                </Badge>
               ) : (
-                <span className="text-[10px] px-1.5 py-0.5 bg-slate-800 text-slate-400 rounded">
+                <Badge variant="outline" className="text-[10px] text-muted-foreground">
                   IDLE
-                </span>
+                </Badge>
               )}
 
               {/* Auto-Follow Live Mode Indicator / Toggle */}
-              <button
+              <Button
                 type="button"
+                variant={isLiveFollow ? "outline" : "secondary"}
+                size="sm"
                 onClick={() => {
                   const next = !isLiveFollow;
                   setIsLiveFollow(next);
@@ -663,89 +639,118 @@ export function LivePlayer({
                     transcriptContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
                   }
                 }}
-                className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${
-                  isLiveFollow
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                    : 'bg-amber-500/15 border-amber-500/30 text-amber-300'
-                }`}
+                className="h-6 text-[10px] px-2.5 rounded-full gap-1.5 font-medium"
                 title={isLiveFollow ? 'Auto-following live speech. Click to browse history.' : 'Auto-follow paused. Click to jump to live speech.'}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${isLiveFollow ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${isLiveFollow ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
                 <span>{isLiveFollow ? 'Live Follow: ON' : 'Paused (Scrolled)'}</span>
-              </button>
+              </Button>
             </div>
 
             <div className="flex items-center gap-2">
               {/* Search input */}
               <div className="relative">
-                <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-slate-500" />
-                <input
+                <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Input
                   type="text"
                   value={transcriptSearch}
                   onChange={(e) => setTranscriptSearch(e.target.value)}
                   placeholder="Search spoken lines..."
-                  className="pl-6 pr-2 py-1 text-[11px] bg-[#111624] border border-[#1e2638] rounded-md text-slate-200 outline-none w-36 focus:w-48 transition-all"
+                  className="pl-6 pr-2 h-7 text-[11px] w-36 focus:w-48 transition-all"
                 />
               </div>
 
               {/* SM / Admin controls */}
               {isSMOrAdmin && (
                 <>
-                  <button
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={handleToggleTranscription}
                     disabled={togglingTranscription}
-                    className="text-[10px] px-2 py-1 rounded bg-[#161c2c] hover:bg-[#202940] text-purple-300 border border-[#232d44] transition-colors"
+                    className="h-7 text-[11px] px-2.5"
                   >
                     {isTranscribing ? 'Pause AI' : 'Start AI'}
-                  </button>
+                  </Button>
                   {subtitles.length > 0 && (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={handleClearSubtitles}
-                      className="text-[10px] px-1.5 py-1 text-slate-500 hover:text-red-400 rounded transition-colors"
+                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
                       title="Clear transcript"
                     >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </Button>
                   )}
                 </>
               )}
 
-              <button
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setShowTranscriptLog(false)}
-                className="text-slate-500 hover:text-slate-300 text-xs p-1"
+                className="h-7 w-7 text-muted-foreground hover:text-foreground"
               >
                 <X className="w-3.5 h-3.5" />
-              </button>
+              </Button>
             </div>
           </div>
 
           {subtitles.length === 0 ? (
-            <div className="py-6 text-center text-xs text-slate-500">
+            <div className="py-6 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-xl bg-muted/10">
               No spoken lines transcribed yet. Audio from the live OBS broadcast is processed on the server using Malaysian Whisper.
             </div>
           ) : (
-            <div className="space-y-1.5">
-              {filteredSubtitles.map((sub, idx) => (
-                <div
-                  key={sub.id || idx}
-                  className="flex items-start gap-2.5 p-2 rounded-lg bg-[#111624] border border-[#1b2337] text-xs hover:border-[#283552] transition-colors"
-                >
-                  <div className="shrink-0 flex items-center gap-1 font-mono text-[10px] text-purple-400 bg-[#171c2c] px-1.5 py-0.5 rounded border border-[#20283c]">
-                    <Clock className="w-2.5 h-2.5" />
-                    <span>
-                      {sub.start_seconds !== null && sub.start_seconds !== undefined
-                        ? `${Math.floor(sub.start_seconds / 60)}:${String(Math.floor(sub.start_seconds % 60)).padStart(2, '0')}`
-                        : new Date(sub.created_at).toLocaleTimeString([], { minute: '2-digit', second: '2-digit' })}
-                    </span>
+            <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card">
+              {filteredSubtitles.map((sub, idx) => {
+                const localTime = sub.created_at
+                  ? new Date(sub.created_at).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })
+                  : '--:--:--';
+
+                const isActive = Boolean(
+                  (activeSubtitleId && (sub.id === activeSubtitleId || sub.text === activeCaption)) ||
+                  (!activeSubtitleId && activeCaption && (sub.text === activeCaption || idx === 0))
+                );
+
+                return (
+                  <div
+                    key={sub.id || idx}
+                    className={`group px-3 py-1.5 transition-colors flex items-center justify-between gap-3 text-xs ${
+                      isActive
+                        ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
+                        : 'border-l-4 border-l-transparent hover:bg-muted/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <span className={`shrink-0 flex items-center gap-1 font-mono text-[11px] select-none ${
+                        isActive ? 'text-primary font-semibold' : 'text-muted-foreground'
+                      }`}>
+                        <Clock className="w-3 h-3 text-muted-foreground/70" />
+                        <span>{localTime}</span>
+                      </span>
+                      <p className={`leading-normal flex-1 break-words transition-colors ${
+                        isActive ? 'text-primary font-semibold' : 'text-foreground font-medium'
+                      }`}>
+                        {sub.text}
+                      </p>
+                      {isActive && (
+                        <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold shrink-0">
+                          LIVE
+                        </Badge>
+                      )}
+                    </div>
+
+                    <Badge variant="outline" className="text-[9px] uppercase font-mono px-1.5 py-0 text-muted-foreground shrink-0">
+                      {sub.language || 'ms'}
+                    </Badge>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-slate-200 font-medium leading-relaxed">{sub.text}</p>
-                  </div>
-                  <span className="text-[9px] uppercase font-mono px-1 py-0.2 bg-[#1b2234] text-slate-400 rounded shrink-0">
-                    {sub.language || 'ms'}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -753,58 +758,62 @@ export function LivePlayer({
 
       {/* Live Markers & Cues Drawer */}
       {showMarkerLog && markers.length > 0 && (
-        <div className="bg-[#0b0e17] border-t border-[#1e2638] p-3 max-h-52 overflow-y-auto">
+        <div className="bg-card border-t border-border/60 p-3 max-h-52 overflow-y-auto">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-[11px] font-bold text-slate-300 flex items-center gap-1.5 uppercase tracking-wider">
-              <Bookmark className="w-3 h-3 text-purple-400" />
+            <span className="text-[11px] font-bold text-foreground flex items-center gap-1.5 uppercase tracking-wider">
+              <Bookmark className="w-3 h-3 text-primary" />
               <span>Live Show Cue & Moment Marks ({markers.length})</span>
             </span>
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setShowMarkerLog(false)}
-              className="text-slate-500 hover:text-slate-300 text-xs p-1"
+              className="h-6 w-6 text-muted-foreground hover:text-foreground"
             >
               <X className="w-3.5 h-3.5" />
-            </button>
+            </Button>
           </div>
-          <div className="space-y-1.5">
+          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card">
             {markers.map((m) => (
               <div
                 key={m.id}
-                className="flex items-center justify-between gap-2 p-1.5 rounded-lg bg-[#111624] border border-[#1b2337] text-xs hover:border-[#283552] transition-colors"
+                className="flex items-center justify-between gap-2 px-3 py-1.5 hover:bg-muted/40 text-xs transition-colors"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <span
                     className={`w-2 h-2 rounded-full shrink-0 ${
                       m.color === 'emerald'
-                        ? 'bg-emerald-400'
+                        ? 'bg-emerald-500'
                         : m.color === 'amber'
-                        ? 'bg-amber-400'
+                        ? 'bg-amber-500'
                         : m.color === 'rose'
-                        ? 'bg-rose-400'
+                        ? 'bg-rose-500'
                         : m.color === 'blue'
-                        ? 'bg-blue-400'
-                        : 'bg-purple-400'
+                        ? 'bg-blue-500'
+                        : 'bg-primary'
                     }`}
                   />
-                  <span className="font-semibold text-slate-200 break-words">{m.title}</span>
+                  <span className="font-semibold text-foreground break-words">{m.title}</span>
                   {m.creator_callsign && (
-                    <span className="text-[10px] text-slate-500 bg-[#161d2e] px-1.5 py-0.2 rounded border border-[#232f48]">
+                    <Badge variant="outline" className="text-[10px] text-muted-foreground px-1 py-0">
                       {m.creator_callsign}
-                    </span>
+                    </Badge>
                   )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] font-mono text-slate-400">
+                  <span className="text-[10px] font-mono text-muted-foreground">
                     {new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                   </span>
                   {isSMOrAdmin && (
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="icon"
                       onClick={() => handleDeleteMarker(m.id)}
-                      className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors"
+                      className="h-6 w-6 text-muted-foreground hover:text-destructive"
                       title="Delete mark"
                     >
                       <Trash2 className="w-3 h-3" />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>

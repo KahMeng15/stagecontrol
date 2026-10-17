@@ -370,14 +370,7 @@ function EventContent() {
                       onClick={() => handleStatusChange(st)}
                       className="text-xs capitalize font-semibold h-7"
                     >
-                      {st === 'live' ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live" />
-                          LIVE
-                        </span>
-                      ) : (
-                        st
-                      )}
+                      {st === 'live' ? 'LIVE' : st}
                     </Button>
                   ))}
                 </div>
@@ -386,9 +379,6 @@ function EventContent() {
                   variant={event.status === 'live' ? 'destructive' : 'secondary'}
                   className="uppercase tracking-wider font-semibold"
                 >
-                  {event.status === 'live' && (
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse-live mr-1" />
-                  )}
                   {event.status}
                 </Badge>
               )}

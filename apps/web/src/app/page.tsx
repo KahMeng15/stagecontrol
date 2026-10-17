@@ -126,8 +126,7 @@ export default function DashboardPage() {
     switch (status) {
       case 'live':
         return (
-          <Badge variant="destructive" className="gap-1.5 font-semibold uppercase tracking-wider">
-            <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse-live" />
+          <Badge variant="destructive" className="font-semibold uppercase tracking-wider">
             ON AIR
           </Badge>
         );

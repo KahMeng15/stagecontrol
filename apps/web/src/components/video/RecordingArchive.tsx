@@ -34,6 +34,9 @@ import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import {
   Dialog,
   DialogContent,
@@ -710,296 +713,282 @@ export function RecordingArchive({
 
       {/* Chapters & Dialogue Transcript Section */}
       {selectedRecording && (
-        <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-5 shadow-xl">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            {/* View Tabs */}
-            <div className="flex items-center gap-1.5 bg-[#0b0e17] p-1 rounded-xl border border-[#1e2638]">
-              <button
-                type="button"
-                onClick={() => setActiveTab('chapters')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeTab === 'chapters'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Bookmark className="w-3.5 h-3.5" />
-                <span>Chapters ({markers.length})</span>
-              </button>
+        <Card className="p-5 shadow-sm">
+          <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'chapters' | 'transcript')}>
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <TabsList>
+                <TabsTrigger value="chapters" className="gap-1.5 text-xs">
+                  <Bookmark className="w-3.5 h-3.5" />
+                  <span>Chapters ({markers.length})</span>
+                </TabsTrigger>
+                <TabsTrigger value="transcript" className="gap-1.5 text-xs">
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Dialogue Transcript ({recordSubtitles.length})</span>
+                  {recordSubtitles.length > 0 && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  )}
+                </TabsTrigger>
+              </TabsList>
 
-              <button
-                type="button"
-                onClick={() => setActiveTab('transcript')}
-                className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 ${
-                  activeTab === 'transcript'
-                    ? 'bg-purple-600 text-white shadow-md'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>Dialogue Transcript ({recordSubtitles.length})</span>
-                {recordSubtitles.length > 0 && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              <div className="flex items-center gap-2">
+                {activeTab === 'chapters' ? (
+                  <Button
+                    size="sm"
+                    onClick={handleOpenAddChapter}
+                    className="h-8 text-xs gap-1.5 shadow-sm"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Chapter</span>
+                  </Button>
+                ) : (
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      type="text"
+                      value={transcriptSearch}
+                      onChange={(e) => setTranscriptSearch(e.target.value)}
+                      placeholder="Search spoken dialogue..."
+                      className="pl-8 h-8 text-xs w-48 focus:w-60 transition-all"
+                    />
+                  </div>
                 )}
-              </button>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              {activeTab === 'chapters' ? (
-                <button
-                  onClick={handleOpenAddChapter}
-                  className="px-2.5 py-1 text-xs font-semibold bg-purple-600 hover:bg-purple-500 text-white rounded-lg transition-colors flex items-center gap-1 shadow-sm"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Add Chapter</span>
-                </button>
-              ) : (
-                <div className="relative">
-                  <Search className="w-3 h-3 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
-                  <input
-                    type="text"
-                    value={transcriptSearch}
-                    onChange={(e) => setTranscriptSearch(e.target.value)}
-                    placeholder="Search spoken dialogue..."
-                    className="pl-7 pr-3 py-1 text-xs bg-[#0b0e17] border border-[#1e2638] rounded-lg text-slate-200 outline-none w-48 focus:w-60 transition-all"
-                  />
+            <TabsContent value="chapters" className="mt-0">
+              {markers.length === 0 ? (
+                <div className="py-8 px-4 rounded-xl border border-dashed border-border/60 text-center bg-muted/10">
+                  <Flag className="w-6 h-6 text-muted-foreground/60 mx-auto mb-2" />
+                  <p className="text-xs text-foreground font-semibold">No chapters or scene marks saved for this take</p>
+                  <p className="text-[11px] text-muted-foreground max-w-sm mx-auto mt-1 leading-relaxed">
+                    Scrub to any moment in the video and click &quot;+ Add Chapter&quot; to bookmark scenes, cues, or rehearsal segments.
+                  </p>
                 </div>
-              )}
-            </div>
-          </div>
-
-          {activeTab === 'chapters' ? (
-            markers.length === 0 ? (
-              <div className="py-6 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
-                <Flag className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
-                <p className="text-xs text-slate-400 font-medium">No chapters or scene marks saved for this take</p>
-                <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
-                  Scrub to any moment in the video and click &quot;+ Add Chapter&quot; to bookmark scenes, cues, or rehearsal segments.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
-                {markers.map((m, idx) => {
-                  const nextMarker = markers[idx + 1];
-                  const isActive =
-                    m.timestamp_seconds !== null &&
-                    m.timestamp_seconds !== undefined &&
-                    currentTime >= m.timestamp_seconds &&
-                    (nextMarker?.timestamp_seconds ? currentTime < nextMarker.timestamp_seconds : true);
-
-                  return (
-                    <div
-                      key={m.id}
-                      className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 ${
-                        isActive
-                          ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
-                          : 'border-l-4 border-l-transparent hover:bg-[#131826]'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleJumpToMarker(m.timestamp_seconds)}
-                        className="flex items-center gap-3 min-w-0 text-left flex-1"
-                      >
-                        {/* Chapter Index / Status Indicator */}
-                        <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
-                          {isActive ? (
-                            <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
-                          ) : (
-                            <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
-                              {String(idx + 1).padStart(2, '0')}
-                            </span>
-                          )}
-                        </div>
-
-                        {/* Color Tag Indicator */}
-                        <span
-                          className={`w-2 h-2 rounded-full shrink-0 ${
-                            m.color === 'emerald'
-                              ? 'bg-emerald-400'
-                              : m.color === 'amber'
-                              ? 'bg-amber-400'
-                              : m.color === 'rose'
-                              ? 'bg-rose-400'
-                              : m.color === 'blue'
-                              ? 'bg-blue-400'
-                              : 'bg-purple-400'
-                          }`}
-                        />
-
-                        {/* Title & Description */}
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-slate-200 group-hover:text-purple-300 transition-colors truncate">
-                              {m.title}
-                            </span>
-                            {isActive && (
-                              <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
-                                NOW PLAYING
-                              </span>
-                            )}
-                          </div>
-                          {m.description && (
-                            <p className="text-[11px] text-slate-400 truncate mt-0.5">{m.description}</p>
-                          )}
-                        </div>
-                      </button>
-
-                      {/* Timecode Badge & Action Buttons */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleJumpToMarker(m.timestamp_seconds)}
-                          className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
-                            isActive
-                              ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
-                              : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
-                          }`}
-                          title="Jump to this time"
-                        >
-                          <Play className="w-2.5 h-2.5 fill-current" />
-                          <span>{formatTime(m.timestamp_seconds || 0)}</span>
-                        </button>
-
-                        {(isSMOrAdmin || isAdmin) && (
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteMarker(m.id)}
-                            className="text-slate-500 hover:text-red-400 p-1.5 rounded-md hover:bg-red-500/10 transition-colors"
-                            title="Delete chapter"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          ) : (
-            /* Dialogue Transcript Tab */
-            recordSubtitles.length === 0 ? (
-              <div className="py-8 px-4 rounded-xl border border-dashed border-[#1e2638] text-center">
-                <FileText className="w-6 h-6 text-slate-600 mx-auto mb-1.5" />
-                <p className="text-xs text-slate-400 font-medium">No dialogue lines transcribed for this take</p>
-                <p className="text-[11px] text-slate-500 max-w-sm mx-auto mt-0.5">
-                  Dialogue spoken during live broadcasts is captured by Malaysian Whisper and synchronized with video timestamps.
-                </p>
-              </div>
-            ) : (
-              <div className="divide-y divide-[#1e2638] border border-[#1e2638] rounded-xl overflow-hidden bg-[#0c0e16] max-h-[420px] overflow-y-auto">
-                {recordSubtitles
-                  .filter((s) => !transcriptSearch.trim() || s.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
-                  .map((sub, idx, arr) => {
-                    const nextSub = arr[idx + 1];
-                    const subStart = sub.start_seconds || 0;
-                    const subEnd = sub.end_seconds ?? (nextSub?.start_seconds ?? subStart + 3.0);
-                    const isCurrent = currentTime >= subStart && currentTime < subEnd;
+              ) : (
+                <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card max-h-[420px] overflow-y-auto">
+                  {markers.map((m, idx) => {
+                    const nextMarker = markers[idx + 1];
+                    const isActive =
+                      m.timestamp_seconds !== null &&
+                      m.timestamp_seconds !== undefined &&
+                      currentTime >= m.timestamp_seconds &&
+                      (nextMarker?.timestamp_seconds ? currentTime < nextMarker.timestamp_seconds : true);
 
                     return (
                       <div
-                        key={sub.id || idx}
-                        onClick={() => handleJumpToSubtitle(sub.start_seconds)}
-                        className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 cursor-pointer ${
-                          isCurrent
-                            ? 'bg-purple-600/15 border-l-4 border-l-purple-500'
-                            : 'border-l-4 border-l-transparent hover:bg-[#131826]'
+                        key={m.id}
+                        className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 ${
+                          isActive
+                            ? 'bg-primary/10 border-l-4 border-l-primary'
+                            : 'border-l-4 border-l-transparent hover:bg-muted/40'
                         }`}
                       >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="w-6 h-6 rounded-md bg-[#161c2c] group-hover:bg-purple-600/30 border border-[#232d44] flex items-center justify-center shrink-0 transition-colors">
-                            {isCurrent ? (
-                              <Play className="w-3 h-3 text-purple-400 fill-purple-400" />
+                        <button
+                          type="button"
+                          onClick={() => handleJumpToMarker(m.timestamp_seconds)}
+                          className="flex items-center gap-3 min-w-0 text-left flex-1"
+                        >
+                          {/* Chapter Index / Status Indicator */}
+                          <div className="w-6 h-6 rounded-md bg-muted border border-border/60 group-hover:border-primary/40 flex items-center justify-center shrink-0 transition-colors">
+                            {isActive ? (
+                              <Play className="w-3 h-3 text-primary fill-primary" />
                             ) : (
-                              <span className="text-[10px] font-mono font-semibold text-slate-400 group-hover:text-purple-300">
+                              <span className="text-[10px] font-mono font-semibold text-muted-foreground group-hover:text-foreground">
                                 {String(idx + 1).padStart(2, '0')}
                               </span>
                             )}
                           </div>
 
+                          {/* Color Tag Indicator */}
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              m.color === 'emerald'
+                                ? 'bg-emerald-500'
+                                : m.color === 'amber'
+                                ? 'bg-amber-500'
+                                : m.color === 'rose'
+                                ? 'bg-rose-500'
+                                : m.color === 'blue'
+                                ? 'bg-blue-500'
+                                : 'bg-primary'
+                            }`}
+                          />
+
+                          {/* Title & Description */}
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium text-slate-200 group-hover:text-purple-300 transition-colors leading-relaxed">
-                                {sub.text}
+                              <span className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors truncate">
+                                {m.title}
                               </span>
-                              {isCurrent && (
-                                <span className="text-[9px] font-mono px-1.5 py-0.5 bg-purple-500/25 text-purple-300 rounded font-semibold border border-purple-500/30 animate-pulse">
-                                  PLAYING
-                                </span>
+                              {isActive && (
+                                <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono">
+                                  NOW PLAYING
+                                </Badge>
                               )}
                             </div>
+                            {m.description && (
+                              <p className="text-[11px] text-muted-foreground truncate mt-0.5">{m.description}</p>
+                            )}
                           </div>
-                        </div>
+                        </button>
 
+                        {/* Timecode Badge & Action Buttons */}
                         <div className="flex items-center gap-2 shrink-0">
-                          <span className="text-[9px] uppercase font-mono px-1.5 py-0.5 bg-[#161c2c] text-slate-400 rounded">
-                            {sub.language || 'en'}
-                          </span>
-                          <button
+                          <Button
                             type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleJumpToSubtitle(sub.start_seconds);
-                            }}
-                            className={`px-2.5 py-1 rounded-md font-mono text-[11px] font-bold border transition-all flex items-center gap-1.5 ${
-                              isCurrent
-                                ? 'bg-purple-600 text-white border-purple-500 shadow-sm'
-                                : 'bg-[#161c2c] hover:bg-purple-600 hover:text-white text-purple-300 border-[#232d44]'
-                            }`}
-                            title="Jump video playback to this line"
+                            size="sm"
+                            variant={isActive ? "default" : "secondary"}
+                            onClick={() => handleJumpToMarker(m.timestamp_seconds)}
+                            className="h-7 px-2.5 text-[11px] font-mono font-bold gap-1.5"
+                            title="Jump to this time"
                           >
                             <Play className="w-2.5 h-2.5 fill-current" />
-                            <span>{formatTime(sub.start_seconds || 0)}</span>
-                          </button>
+                            <span>{formatTime(m.timestamp_seconds || 0)}</span>
+                          </Button>
+
+                          {(isSMOrAdmin || isAdmin) && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDeleteMarker(m.id)}
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                              title="Delete chapter"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
                         </div>
                       </div>
                     );
                   })}
-              </div>
-            )
-          )}
-        </div>
+                </div>
+              )}
+            </TabsContent>
+
+            <TabsContent value="transcript" className="mt-0">
+              {recordSubtitles.length === 0 ? (
+                <div className="py-8 px-4 rounded-xl border border-dashed border-border/60 text-center bg-muted/10">
+                  <FileText className="w-6 h-6 text-muted-foreground/60 mx-auto mb-2" />
+                  <p className="text-xs text-foreground font-semibold">No dialogue lines transcribed for this take</p>
+                  <p className="text-[11px] text-muted-foreground max-w-sm mx-auto mt-1 leading-relaxed">
+                    Dialogue spoken during live broadcasts is captured by Malaysian Whisper and synchronized with video timestamps.
+                  </p>
+                </div>
+              ) : (
+                <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card max-h-[420px] overflow-y-auto">
+                  {recordSubtitles
+                    .filter((s) => !transcriptSearch.trim() || s.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
+                    .map((sub, idx, arr) => {
+                      const nextSub = arr[idx + 1];
+                      const subStart = sub.start_seconds || 0;
+                      const subEnd = sub.end_seconds ?? (nextSub?.start_seconds ?? subStart + 3.0);
+                      const isCurrent = currentTime >= subStart && currentTime < subEnd;
+
+                      return (
+                        <div
+                          key={sub.id || idx}
+                          onClick={() => handleJumpToSubtitle(sub.start_seconds)}
+                          className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 cursor-pointer ${
+                            isCurrent
+                              ? 'bg-primary/10 border-l-4 border-l-primary'
+                              : 'border-l-4 border-l-transparent hover:bg-muted/40'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <div className="w-6 h-6 rounded-md bg-muted border border-border/60 group-hover:border-primary/40 flex items-center justify-center shrink-0 transition-colors">
+                              {isCurrent ? (
+                                <Play className="w-3 h-3 text-primary fill-primary" />
+                              ) : (
+                                <span className="text-[10px] font-mono font-semibold text-muted-foreground group-hover:text-foreground">
+                                  {String(idx + 1).padStart(2, '0')}
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium text-foreground group-hover:text-primary transition-colors leading-relaxed">
+                                  {sub.text}
+                                </span>
+                                {isCurrent && (
+                                  <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono">
+                                    PLAYING
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0">
+                            <Badge variant="outline" className="text-[9px] uppercase font-mono px-1 py-0 text-muted-foreground">
+                              {sub.language || 'en'}
+                            </Badge>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={isCurrent ? "default" : "secondary"}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleJumpToSubtitle(sub.start_seconds);
+                              }}
+                              className="h-7 px-2.5 text-[11px] font-mono font-bold gap-1.5"
+                              title="Jump video playback to this line"
+                            >
+                              <Play className="w-2.5 h-2.5 fill-current" />
+                              <span>{formatTime(sub.start_seconds || 0)}</span>
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              )}
+            </TabsContent>
+          </Tabs>
+        </Card>
       )}
 
       {/* Recordings Archive List */}
-      <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 shadow-xl">
-        <div className="flex items-center justify-between mb-4">
+      <Card className="p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              <Film className="w-4 h-4 text-purple-400" />
+            <h3 className="text-sm font-bold text-foreground flex items-center gap-2">
+              <Film className="w-4 h-4 text-primary" />
               <span>Event Video Takes & Recordings ({recordings.length})</span>
             </h3>
-            <p className="text-xs text-slate-400 mt-0.5">
+            <p className="text-xs text-muted-foreground mt-0.5">
               Saved fMP4 recordings automatically archived to persistent storage during live OBS streams.
             </p>
           </div>
 
-          <button
+          <Button
+            variant="outline"
+            size="sm"
             onClick={loadRecordings}
             disabled={loading}
-            className="px-3 py-1.5 text-xs font-medium bg-[#161c2c] hover:bg-[#1f283e] text-slate-200 border border-[#232d44] rounded-lg transition-colors flex items-center gap-1.5"
+            className="gap-1.5 text-xs"
           >
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
             <span>Sync Disk</span>
-          </button>
+          </Button>
         </div>
 
         {loading && recordings.length === 0 ? (
           <div className="py-12 flex flex-col items-center justify-center">
-            <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mb-3" />
-            <p className="text-xs text-slate-400">Loading recording archive...</p>
+            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin mb-3" />
+            <p className="text-xs text-muted-foreground">Loading recording archive...</p>
           </div>
         ) : error ? (
-          <div className="p-4 rounded-xl bg-red-950/20 border border-red-500/30 text-red-300 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-red-400" />
+          <div className="p-4 rounded-xl bg-destructive/10 border border-destructive/30 text-destructive text-xs flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-destructive" />
             <span>{error}</span>
           </div>
         ) : recordings.length === 0 ? (
-          <div className="py-12 text-center border border-dashed border-[#1e2638] rounded-xl">
-            <Film className="w-10 h-10 text-slate-600 mx-auto mb-2" />
-            <h4 className="text-sm font-medium text-slate-300">No recordings saved yet</h4>
-            <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
+          <div className="py-12 text-center border border-dashed border-border/60 rounded-xl bg-muted/10">
+            <Film className="w-10 h-10 text-muted-foreground/50 mx-auto mb-2" />
+            <h4 className="text-sm font-semibold text-foreground">No recordings saved yet</h4>
+            <p className="text-xs text-muted-foreground max-w-sm mx-auto mt-1 leading-relaxed">
               Start streaming from OBS with your event stream key. MediaMTX will automatically record and index completed takes here.
             </p>
           </div>
@@ -1010,80 +999,92 @@ export function RecordingArchive({
               const isEditing = editingId === rec.id;
 
               return (
-                <div
+                <Card
                   key={rec.id}
-                  className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
+                  className={cn(
+                    "p-4 transition-all flex flex-col justify-between",
                     isSelected
-                      ? 'bg-blue-600/10 border-blue-500/40 shadow-lg shadow-blue-950/20'
-                      : 'bg-[#0c0e16] border-[#1e2638] hover:border-[#2a354f]'
-                  }`}
+                      ? "border-primary bg-primary/5 shadow-md shadow-primary/10"
+                      : "hover:border-border hover:bg-muted/20"
+                  )}
                 >
                   <div>
                     {/* Card Header */}
                     <div className="flex items-start justify-between gap-2 mb-2">
                       {isEditing ? (
                         <div className="flex items-center gap-1.5 flex-1">
-                          <input
+                          <Input
                             type="text"
                             value={editTitle}
                             onChange={(e) => setEditTitle(e.target.value)}
-                            className="flex-1 px-2 py-1 text-xs bg-[#11141f] border border-blue-500 rounded text-slate-100"
+                            className="h-7 text-xs flex-1"
                             autoFocus
                           />
-                          <button
+                          <Button
+                            size="icon"
+                            variant="default"
                             onClick={() => handleSaveRename(rec.id)}
                             disabled={savingEdit}
-                            className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded"
+                            className="h-7 w-7"
                             title="Save title"
                           >
                             <Check className="w-3.5 h-3.5" />
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
                             onClick={() => setEditingId(null)}
-                            className="p-1 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded"
+                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
                             title="Cancel"
                           >
                             <X className="w-3.5 h-3.5" />
-                          </button>
+                          </Button>
                         </div>
                       ) : (
                         <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <h4 className="text-xs font-bold text-slate-200 truncate">
+                          <h4 className="text-xs font-bold text-foreground truncate">
                             {formatFriendlyRecordingTitle(rec.title)}
                           </h4>
                           {isSMOrAdmin && (
-                            <button
+                            <Button
+                              size="icon"
+                              variant="ghost"
                               onClick={() => handleStartRename(rec)}
-                              className="text-slate-500 hover:text-slate-300"
+                              className="h-6 w-6 text-muted-foreground hover:text-foreground"
                               title="Rename recording"
                             >
                               <Edit2 className="w-3 h-3" />
-                            </button>
+                            </Button>
                           )}
                         </div>
                       )}
 
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#161c2c] text-blue-400 border border-[#232d44]">
+                      <Badge
+                        variant={rec.status === 'ready' ? 'secondary' : 'outline'}
+                        className="text-[10px] font-mono uppercase"
+                      >
                         {rec.status.toUpperCase()}
-                      </span>
+                      </Badge>
                     </div>
 
                     {/* Metadata chips */}
-                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-slate-400 mb-4">
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-4">
                       <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-slate-500" />
+                        <Calendar className="w-3 h-3 text-muted-foreground/70" />
                         <span>{formatFriendlyDate(rec.created_at)}</span>
                       </div>
                       <div className="flex items-center gap-1">
-                        <HardDrive className="w-3 h-3 text-slate-500" />
+                        <HardDrive className="w-3 h-3 text-muted-foreground/70" />
                         <span>{formatFileSize(rec.file_size_bytes)}</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Actions Bar */}
-                  <div className="flex items-center justify-between pt-3 border-t border-[#1e2638]/60">
-                    <button
+                  <div className="flex items-center justify-between pt-3 border-t border-border/60">
+                    <Button
+                      size="sm"
+                      variant={isSelected ? "default" : "secondary"}
                       onClick={() => {
                         if (isSelected) {
                           togglePlay();
@@ -1092,63 +1093,71 @@ export function RecordingArchive({
                           setAutoPlayNext(true);
                         }
                       }}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                        isSelected
-                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                          : 'bg-[#182030] hover:bg-[#202b42] text-slate-200'
-                      }`}
+                      className="gap-1.5 text-xs font-semibold h-8"
                     >
                       {isSelected && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
                       <span>{isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take'}</span>
-                    </button>
+                    </Button>
 
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={getAuthenticatedUrl(rec.download_url)}
-                        download
-                        className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-[#1a2030] rounded-lg transition-colors"
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        asChild
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
                         title="Download MP4"
                       >
-                        <Download className="w-4 h-4" />
-                      </a>
+                        <a
+                          href={getAuthenticatedUrl(rec.download_url)}
+                          download
+                        >
+                          <Download className="w-4 h-4" />
+                        </a>
+                      </Button>
 
                       {isAdmin && (
                         <>
                           {deletingId === rec.id ? (
-                            <div className="flex items-center gap-1 bg-red-950/60 p-1 rounded-lg border border-red-500/40">
-                              <span className="text-[10px] text-red-300 font-semibold px-1">Delete?</span>
-                              <button
+                            <div className="flex items-center gap-1 bg-destructive/10 p-1 rounded-lg border border-destructive/30">
+                              <span className="text-[10px] text-destructive font-semibold px-1">Delete?</span>
+                              <Button
+                                size="sm"
+                                variant="destructive"
                                 onClick={() => handleDelete(rec.id)}
-                                className="px-1.5 py-0.5 bg-red-600 hover:bg-red-500 text-white text-[10px] rounded font-bold"
+                                className="h-6 px-2 text-[10px] font-bold"
                               >
                                 Yes
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="ghost"
                                 onClick={() => setDeletingId(null)}
-                                className="px-1.5 py-0.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-[10px] rounded"
+                                className="h-6 px-2 text-[10px]"
                               >
                                 No
-                              </button>
+                              </Button>
                             </div>
                           ) : (
-                            <button
+                            <Button
+                              variant="ghost"
+                              size="icon"
                               onClick={() => setDeletingId(rec.id)}
-                              className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
                               title="Delete recording"
                             >
                               <Trash2 className="w-4 h-4" />
-                            </button>
+                            </Button>
                           )}
                         </>
                       )}
                     </div>
                   </div>
-                </div>
+                </Card>
               );
             })}
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Add Chapter / Mark Dialog using shadcn/ui */}
       <Dialog open={showAddChapterModal} onOpenChange={setShowAddChapterModal}>
