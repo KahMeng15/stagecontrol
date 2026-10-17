@@ -193,6 +193,15 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     assert rename_resp.status_code == 200
     assert rename_resp.json()["title"] == "Act 1 Rehearsal Take"
 
+    # 7b. Test optimize recording endpoint
+    opt_resp = client.post(
+        f"/api/events/{event.id}/recordings/{rec_id}/optimize",
+        headers=headers
+    )
+    assert opt_resp.status_code == 200
+    assert opt_resp.json()["id"] == rec_id
+    assert opt_resp.json()["status"] == "ready"
+
     # 8. Test delete recording
     del_resp = client.delete(f"/api/events/{event.id}/recordings/{rec_id}", headers=headers)
     assert del_resp.status_code == 204

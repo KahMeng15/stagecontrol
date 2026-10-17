@@ -69,6 +69,8 @@ def create_range_video_response(file_path: Path, request: Request, content_type:
                 "Content-Type": content_type,
                 "Content-Length": str(file_size),
                 "Accept-Ranges": "bytes",
+                "Content-Disposition": "inline",
+                "Cache-Control": "public, max-age=86400",
             }
         )
 
@@ -80,6 +82,8 @@ def create_range_video_response(file_path: Path, request: Request, content_type:
         "Content-Range": f"bytes {start}-{end}/{file_size}",
         "Content-Length": str(content_length),
         "Accept-Ranges": "bytes",
+        "Content-Disposition": "inline",
+        "Cache-Control": "public, max-age=86400",
     }
 
     return StreamingResponse(

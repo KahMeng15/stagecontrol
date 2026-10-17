@@ -18,6 +18,7 @@ class StreamStatusResponse(BaseModel):
     hls_url: str
     hls_playlist_url: str
     stream_key: Optional[str] = None
+    ready_time: Optional[str] = None
 
 class RecordingResponse(BaseModel):
     id: str

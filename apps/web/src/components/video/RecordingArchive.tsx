@@ -76,6 +76,9 @@ export function RecordingArchive({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [autoPlayNext, setAutoPlayNext] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [isBuffering, setIsBuffering] = useState(false);
+  const [bufferedProgress, setBufferedProgress] = useState(0);
+  const [optimizingId, setOptimizingId] = useState<string | null>(null);
 
   // Markers & chapters state
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
@@ -227,12 +230,20 @@ export function RecordingArchive({
     loadRecordings();
   }, [loadRecordings]);
 
-  // When selected recording changes, reset time, clear error, and auto-play if requested
+  // When selected recording changes, reset time, sync duration, clear error, and auto-play if requested
   useEffect(() => {
-    if (selectedRecording && videoRef.current) {
+    if (selectedRecording) {
       setCurrentTime(0);
       setVideoError(null);
-      if (autoPlayNext) {
+      setIsBuffering(false);
+      setBufferedProgress(0);
+      // Fallback to verified database duration immediately so timeline never displays 00:00 or NaN
+      if (selectedRecording.duration_seconds && selectedRecording.duration_seconds > 0) {
+        setDuration(selectedRecording.duration_seconds);
+      } else {
+        setDuration(0);
+      }
+      if (autoPlayNext && videoRef.current) {
         videoRef.current
           .play()
           .then(() => setIsPlaying(true))
@@ -250,15 +261,73 @@ export function RecordingArchive({
   const handleTimeUpdate = () => {
     if (videoRef.current) {
       setCurrentTime(videoRef.current.currentTime);
-      if (videoRef.current.duration && !isNaN(videoRef.current.duration)) {
-        setDuration(videoRef.current.duration);
+      const d = videoRef.current.duration;
+      if (d && !isNaN(d) && isFinite(d) && d > 0) {
+        setDuration(d);
       }
     }
   };
 
   const handleLoadedMetadata = () => {
-    if (videoRef.current && videoRef.current.duration) {
-      setDuration(videoRef.current.duration);
+    if (videoRef.current) {
+      const d = videoRef.current.duration;
+      if (d && !isNaN(d) && isFinite(d) && d > 0) {
+        setDuration(d);
+      } else if (selectedRecording?.duration_seconds && selectedRecording.duration_seconds > 0) {
+        setDuration(selectedRecording.duration_seconds);
+      }
+      setIsBuffering(false);
+    }
+  };
+
+  const handleProgress = () => {
+    if (videoRef.current) {
+      const d = duration || selectedRecording?.duration_seconds || 0;
+      if (d > 0) {
+        const buf = videoRef.current.buffered;
+        if (buf.length > 0) {
+          const end = buf.end(buf.length - 1);
+          setBufferedProgress(Math.min(100, Math.max(0, (end / d) * 100)));
+        }
+      }
+    }
+  };
+
+  const handleRetryPlayback = () => {
+    if (!videoRef.current) return;
+    setVideoError(null);
+    setIsBuffering(true);
+    videoRef.current.load();
+    videoRef.current.currentTime = currentTime;
+    videoRef.current
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setIsBuffering(false);
+      })
+      .catch((e) => {
+        console.error("Retry playback error:", e);
+        setVideoError("Unable to resume playback. Please verify connection or retry.");
+        setIsBuffering(false);
+      });
+  };
+
+  const handleOptimizeTake = async (recId: string) => {
+    setOptimizingId(recId);
+    try {
+      const updated = await api.optimizeRecording(eventId, recId);
+      setRecordings((prev) => prev.map((r) => (r.id === recId ? updated : r)));
+      if (selectedRecording?.id === recId) {
+        setSelectedRecording(updated);
+        if (updated.duration_seconds > 0) {
+          setDuration(updated.duration_seconds);
+        }
+      }
+      toast.success("Take indexed & faststart optimized successfully");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Failed to optimize take");
+    } finally {
+      setOptimizingId(null);
     }
   };
 
@@ -270,11 +339,13 @@ export function RecordingArchive({
         .then(() => {
           setIsPlaying(true);
           setVideoError(null);
+          setIsBuffering(false);
         })
         .catch((err) => {
           console.error("Playback error:", err);
-          setVideoError("Unable to play video take. Click play to retry.");
+          setVideoError("Unable to play video take. Click retry or download take.");
           setIsPlaying(false);
+          setIsBuffering(false);
         });
     } else {
       videoRef.current.pause();
@@ -373,10 +444,15 @@ export function RecordingArchive({
     }
   };
 
-  const formatTime = (seconds: number) => {
-    if (!seconds || isNaN(seconds)) return '00:00';
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
+  const formatTime = (seconds: number | null | undefined) => {
+    if (!seconds || isNaN(seconds) || !isFinite(seconds) || seconds < 0) return '00:00';
+    const totalSecs = Math.floor(seconds);
+    const hrs = Math.floor(totalSecs / 3600);
+    const mins = Math.floor((totalSecs % 3600) / 60);
+    const secs = totalSecs % 60;
+    if (hrs > 0) {
+      return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    }
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -464,17 +540,38 @@ export function RecordingArchive({
           {selectedRecording ? (
             <>
               {videoError && (
-                <div className="absolute top-4 left-4 right-4 bg-red-950/80 border border-red-500/40 text-red-300 text-xs p-2.5 rounded-lg flex items-center justify-between z-20">
-                  <div className="flex items-center gap-2">
+                <div className="absolute top-4 left-4 right-4 bg-red-950/90 border border-red-500/50 text-red-200 text-xs p-3 rounded-xl flex items-center justify-between z-25 shadow-2xl backdrop-blur-md">
+                  <div className="flex items-center gap-2.5">
                     <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                     <span>{videoError}</span>
                   </div>
-                  <button
-                    onClick={() => setVideoError(null)}
-                    className="p-1 text-red-400 hover:text-red-200"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      onClick={handleRetryPlayback}
+                      className="gap-1 bg-red-500/20 hover:bg-red-500/30 text-white text-[11px] border border-red-400/30 h-7 px-2.5 font-semibold"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Retry Playback</span>
+                    </Button>
+                    <button
+                      onClick={() => setVideoError(null)}
+                      className="p-1 text-red-400 hover:text-red-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* 4G Buffering Overlay */}
+              {isBuffering && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs z-15 pointer-events-none">
+                  <div className="bg-black/85 px-4 py-2.5 rounded-xl border border-white/10 flex items-center gap-2.5 text-white text-xs shadow-2xl">
+                    <div className="w-4 h-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                    <span className="font-medium tracking-wide">Buffering replay stream...</span>
+                  </div>
                 </div>
               )}
 
@@ -483,19 +580,25 @@ export function RecordingArchive({
                 key={selectedRecording.id}
                 src={getAuthenticatedUrl(selectedRecording.stream_url)}
                 playsInline
-                preload="auto"
+                preload="metadata"
                 className="w-full h-full object-contain cursor-pointer"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
-                onPlay={() => {
+                onProgress={handleProgress}
+                onWaiting={() => setIsBuffering(true)}
+                onPlaying={() => {
                   setIsPlaying(true);
+                  setIsBuffering(false);
                   setVideoError(null);
                 }}
+                onCanPlay={() => setIsBuffering(false)}
+                onSeeked={() => setIsBuffering(false)}
                 onPause={() => setIsPlaying(false)}
                 onError={(e) => {
                   console.error("Video error event:", e);
-                  setVideoError("Unable to load video take. Click play or download take.");
+                  setVideoError("Playback interrupted. Click Retry to re-connect stream.");
                   setIsPlaying(false);
+                  setIsBuffering(false);
                 }}
                 onClick={togglePlay}
               />
@@ -521,7 +624,7 @@ export function RecordingArchive({
               })()}
 
               {/* Big Play Overlay if paused */}
-              {!isPlaying && (
+              {!isPlaying && !isBuffering && (
                 <button
                   onClick={togglePlay}
                   className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/20 transition-colors z-10"
@@ -534,26 +637,34 @@ export function RecordingArchive({
 
               {/* Floating Bottom Scrubber & Controls */}
               <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col gap-2 z-10">
-                {/* Timeline Scrubber with Interactive Chapter Marker Pins */}
+                {/* Timeline Scrubber with Download Buffer Track & Chapter Markers */}
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-slate-300 w-10 text-right">
+                  <span className="text-[10px] font-mono text-slate-300 w-12 text-right">
                     {formatTime(currentTime)}
                   </span>
                   <div className="flex-1 relative flex items-center h-6 group/timeline">
+                    {/* Background buffer progress track for slow/patchy 4G */}
+                    <div className="absolute inset-x-0 h-1.5 rounded-lg bg-slate-800 overflow-hidden pointer-events-none">
+                      <div
+                        className="h-full bg-slate-500/50 transition-all duration-300"
+                        style={{ width: `${bufferedProgress}%` }}
+                      />
+                    </div>
                     <input
                       type="range"
                       min={0}
-                      max={duration || 100}
+                      max={Math.max(1, duration || selectedRecording?.duration_seconds || 1)}
                       step={0.5}
                       value={currentTime}
                       onChange={handleSeekChange}
-                      className="w-full accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-slate-700/80 z-10"
+                      className="w-full accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-transparent z-10"
                     />
                     {/* Chapter Marker Pins on Timeline Track */}
-                    {duration > 0 &&
+                    {(duration > 0 || (selectedRecording?.duration_seconds ?? 0) > 0) &&
                       markers.map((m) => {
+                        const totalDur = duration || selectedRecording?.duration_seconds || 1;
                         if (m.timestamp_seconds === null || m.timestamp_seconds === undefined) return null;
-                        const pct = Math.min(100, Math.max(0, (m.timestamp_seconds / duration) * 100));
+                        const pct = Math.min(100, Math.max(0, (m.timestamp_seconds / totalDur) * 100));
                         return (
                           <button
                             key={m.id}
@@ -590,8 +701,8 @@ export function RecordingArchive({
                         );
                       })}
                   </div>
-                  <span className="text-[10px] font-mono text-slate-400 w-10">
-                    {formatTime(duration)}
+                  <span className="text-[10px] font-mono text-slate-400 w-12 text-left">
+                    {formatTime(duration || selectedRecording?.duration_seconds || 0)}
                   </span>
                 </div>
 
@@ -1141,20 +1252,47 @@ export function RecordingArchive({
                         <Calendar className="w-3 h-3 text-muted-foreground/70" />
                         <span>{formatFriendlyDate(rec.created_at)}</span>
                       </div>
+                      {rec.duration_seconds > 0 && (
+                        <>
+                          <span className="text-border hidden sm:inline">•</span>
+                          <div className="flex items-center gap-1 font-semibold text-foreground/80" title="Take Duration">
+                            <Clock className="w-3 h-3 text-primary" />
+                            <span>{formatTime(rec.duration_seconds)}</span>
+                          </div>
+                        </>
+                      )}
                       <span className="text-border hidden sm:inline">•</span>
                       <div className="flex items-center gap-1 hidden sm:flex" title="File Size">
                         <HardDrive className="w-3 h-3 text-muted-foreground/70" />
                         <span>{formatFileSize(rec.file_size_bytes)}</span>
                       </div>
                       <Badge
-                        variant={rec.status === 'ready' ? 'secondary' : 'outline'}
-                        className="text-[9px] font-mono uppercase px-1.5 py-0 h-4 shrink-0"
+                        variant={rec.status === 'ready' ? 'secondary' : rec.status === 'recording' ? 'destructive' : 'outline'}
+                        className={cn(
+                          "text-[9px] font-mono uppercase px-1.5 py-0 h-4 shrink-0 flex items-center gap-1",
+                          rec.status === 'recording' && "bg-red-500/20 text-red-400 border-red-500/30"
+                        )}
                       >
-                        {rec.status.toUpperCase()}
+                        {rec.status === 'recording' && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
+                        )}
+                        <span>{rec.status.toUpperCase()}</span>
                       </Badge>
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
+                      {isSMOrAdmin && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleOptimizeTake(rec.id)}
+                          disabled={optimizingId === rec.id}
+                          className="h-7 w-7 text-muted-foreground hover:text-primary"
+                          title="Faststart remux & re-index take"
+                        >
+                          <Sparkles className={`w-3.5 h-3.5 text-primary ${optimizingId === rec.id ? 'animate-spin' : ''}`} />
+                        </Button>
+                      )}
                       <Button
                         size="sm"
                         variant={isSelected ? "default" : "secondary"}

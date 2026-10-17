@@ -24,6 +24,11 @@ from app.schemas.recording import (
     RecordingUpdate,
     StreamStatusResponse,
 )
+from app.services.video_processor import (
+    is_fragmented_mp4,
+    probe_video_metadata,
+    remux_to_faststart_mp4,
+)
 
 router = APIRouter(prefix="/events/{event_id}", tags=["Live Streams & Video Playback"])
 
@@ -73,6 +78,8 @@ async def get_stream_status(
     bytes_received = 0
     tracks = []
 
+    ready_time = None
+
     # Query MediaMTX API
     try:
         mediamtx_api = settings.MEDIAMTX_API_URL.rstrip("/")
@@ -82,6 +89,7 @@ async def get_stream_status(
                 data = resp.json()
                 ready = bool(data.get("ready", False))
                 is_live = ready
+                ready_time = data.get("readyTime")
                 bytes_received = data.get("bytesReceived", 0)
                 readers_count = len(data.get("readers", []))
                 raw_tracks = data.get("tracks", [])
@@ -93,7 +101,6 @@ async def get_stream_status(
         # If MediaMTX is temporarily unreachable, default to off-air
         is_live = False
         ready = False
-
 
     base_domain = get_effective_domain(request, db)
     # Extract hostname without protocol/port for RTMP
@@ -120,7 +127,8 @@ async def get_stream_status(
         webrtc_whep_url=webrtc_whep_url,
         hls_url=hls_url,
         hls_playlist_url=hls_playlist_url,
-        stream_key=stream_key if can_view_key else None
+        stream_key=stream_key if can_view_key else None,
+        ready_time=ready_time
     )
 
 def format_friendly_recording_title(file_stem: str, file_mtime: datetime | None = None) -> str:
@@ -159,19 +167,37 @@ def list_event_recordings(
     event, _ = event_and_member
     stream_key = event.stream_key
 
+    # Check whether the stream is actively live on MediaMTX
+    is_live = False
+    try:
+        mediamtx_api = settings.MEDIAMTX_API_URL.rstrip("/")
+        with httpx.Client(timeout=0.3) as client:
+            resp = client.get(f"{mediamtx_api}/v3/paths/get/live/{stream_key}")
+            if resp.status_code == 200:
+                is_live = bool(resp.json().get("ready", False))
+    except Exception:
+        is_live = False
+
     # Disk scan for new files
     event_rec_dir = RECORDINGS_DIR / "live" / stream_key
     if event_rec_dir.exists() and event_rec_dir.is_dir():
         import re
         from datetime import timedelta
+        now_utc = datetime.now(timezone.utc)
+
         for file in event_rec_dir.glob("*.mp4"):
+            if ".tmp" in file.name or ".part" in file.name or ".faststart" in file.name:
+                continue
+
             rel_path = f"live/{stream_key}/{file.name}"
             existing = db.query(Recording).filter(
                 Recording.event_id == event.id,
                 Recording.filename == rel_path
             ).first()
 
-            mtime = datetime.fromtimestamp(file.stat().st_mtime, tz=timezone.utc)
+            file_stat = file.stat()
+            file_size = file_stat.st_size
+            mtime = datetime.fromtimestamp(file_stat.st_mtime, tz=timezone.utc)
             match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', file.stem)
             if match:
                 dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
@@ -179,9 +205,34 @@ def list_event_recordings(
             else:
                 start_dt = mtime
 
-            duration = max(0.0, (mtime - start_dt).total_seconds())
             friendly_title = format_friendly_recording_title(file.stem, start_dt)
-            file_size = file.stat().st_size
+
+            # Check if this take is actively being written by MediaMTX
+            is_active_recording = is_live and file_size >= 1024 and (now_utc - mtime).total_seconds() < 5
+
+            if is_active_recording:
+                rec_status = "recording"
+                duration = max(0.0, (now_utc - start_dt).total_seconds())
+            else:
+                # File is settled on disk
+                if is_fragmented_mp4(file):
+                    success, exact_dur, new_size = remux_to_faststart_mp4(file)
+                    if success:
+                        duration = exact_dur
+                        file_size = new_size
+                        rec_status = "ready"
+                    else:
+                        meta = probe_video_metadata(file)
+                        duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
+                        rec_status = "ready"
+                else:
+                    # Already faststart / standard MP4
+                    rec_status = "ready"
+                    if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
+                        meta = probe_video_metadata(file)
+                        duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
+                    else:
+                        duration = existing.duration_seconds
 
             rec_target = None
             if not existing:
@@ -191,7 +242,7 @@ def list_event_recordings(
                     filename=rel_path,
                     file_size_bytes=file_size,
                     duration_seconds=round(duration, 1),
-                    status="ready",
+                    status=rec_status,
                     created_at=start_dt
                 )
                 db.add(new_rec)
@@ -200,13 +251,13 @@ def list_event_recordings(
             else:
                 existing.duration_seconds = round(duration, 1)
                 existing.file_size_bytes = file_size
-                existing.created_at = start_dt
+                existing.status = rec_status
                 if existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
                     existing.title = friendly_title
                 rec_target = existing
 
             # Link all subtitles within this recording's time window
-            if rec_target:
+            if rec_target and rec_status == "ready":
                 window_subs = db.query(Subtitle).filter(
                     Subtitle.event_id == event.id,
                     Subtitle.created_at >= start_dt - timedelta(seconds=2),
@@ -259,6 +310,7 @@ def stream_recording_video(
     """
     Streams the recorded MP4 file with HTTP 206 Partial Content (range requests)
     for seamless seeking, scrubbing, pause, and resume on all devices.
+    Automatically faststart-remuxes on-the-fly if needed.
     """
     event, _ = event_and_member
     recording = db.query(Recording).filter(
@@ -286,7 +338,76 @@ def stream_recording_video(
             detail="Recording media file missing from disk"
         )
 
+    # If the file is settled and still an unindexed fragmented MP4, faststart remux it
+    now_utc = datetime.now(timezone.utc)
+    mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
+    if (now_utc - mtime).total_seconds() >= 4 and is_fragmented_mp4(file_path):
+        success, exact_dur, new_size = remux_to_faststart_mp4(file_path)
+        if success:
+            recording.duration_seconds = round(exact_dur, 1)
+            recording.file_size_bytes = new_size
+            recording.status = "ready"
+            db.commit()
+
     return create_range_video_response(file_path, request)
+
+@router.post("/recordings/{recording_id}/optimize", response_model=RecordingResponse)
+def optimize_single_recording(
+    recording_id: str,
+    request: Request,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+    db: Session = Depends(get_db)
+):
+    """
+    Explicitly triggers faststart remux and ffprobe metadata probe on a specific recording.
+    """
+    event, _ = event_and_member
+    recording = db.query(Recording).filter(
+        Recording.id == recording_id,
+        Recording.event_id == event.id
+    ).first()
+
+    if not recording:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording not found"
+        )
+
+    file_path = (RECORDINGS_DIR / recording.filename).resolve()
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Recording media file missing from disk"
+        )
+
+    if is_fragmented_mp4(file_path):
+        success, exact_dur, new_size = remux_to_faststart_mp4(file_path)
+        if success:
+            recording.duration_seconds = round(exact_dur, 1)
+            recording.file_size_bytes = new_size
+            recording.status = "ready"
+    else:
+        meta = probe_video_metadata(file_path)
+        if meta.get("duration"):
+            recording.duration_seconds = round(meta["duration"], 1)
+        recording.file_size_bytes = file_path.stat().st_size
+        recording.status = "ready"
+
+    db.commit()
+    db.refresh(recording)
+    base_api = f"{str(request.base_url).rstrip('/')}/api/events/{event.id}/recordings"
+    return RecordingResponse(
+        id=recording.id,
+        event_id=recording.event_id,
+        title=recording.title,
+        filename=recording.filename,
+        duration_seconds=recording.duration_seconds,
+        file_size_bytes=recording.file_size_bytes,
+        status=recording.status,
+        created_at=recording.created_at,
+        stream_url=f"{base_api}/{recording.id}/stream",
+        download_url=f"{base_api}/{recording.id}/download"
+    )
 
 @router.get("/recordings/{recording_id}/download")
 def download_recording_video(

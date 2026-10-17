@@ -591,17 +591,97 @@ function EventContent() {
                     />
                   </div>
 
-                  {/* OBS Settings Advisory */}
-                  <div className="p-3.5 rounded-xl bg-primary/5 border border-primary/20 text-xs space-y-2">
-                    <div className="flex items-center gap-2 font-bold text-foreground">
-                      <Zap className="w-4 h-4 text-amber-400" />
-                      <span>Recommended OBS Settings for Ultra-Low Latency (~200ms)</span>
+                  {/* OBS Profiles & Bandwidth Presets */}
+                  <div className="space-y-3 pt-2">
+                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
+                      Recommended Encoder Presets (Choose based on your network):
+                    </span>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {/* Preset 1: 4G / Mobile Multi-Viewer (Recommended) */}
+                      <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/25 text-xs space-y-2.5 relative group">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+                            <Zap className="w-4 h-4 text-emerald-400" />
+                            <span>4G / Multi-Viewer (720p @ 500kbps)</span>
+                          </div>
+                          <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold">
+                            RECOMMENDED
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          Saves 90% bandwidth. Ensures team members on 4G / LTE mobile connections watch without buffering.
+                        </p>
+                        <ul className="text-[11px] font-mono space-y-1 text-slate-300 bg-background/50 p-2.5 rounded-lg border border-border/40">
+                          <li>• Resolution: <strong>1280x720 (720p 30fps)</strong></li>
+                          <li>• Bitrate: <strong className="text-emerald-400">500 kbps (CBR)</strong></li>
+                          <li>• Audio: <strong>64 kbps (AAC stereo)</strong></li>
+                          <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
+                        </ul>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="secondary"
+                          onClick={() => {
+                            const config = `OBS Low-Bandwidth 4G Preset:
+Resolution: 1280x720 (720p)
+Bitrate: 500 Kbps (CBR)
+Audio: 64 Kbps AAC
+Keyframe Interval: 2s
+Max B-frames: 0
+Tune: zerolatency`;
+                            navigator.clipboard.writeText(config);
+                            toast.success('4G 500kbps OBS preset copied!');
+                          }}
+                          className="w-full gap-1.5 text-xs font-semibold"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy 500kbps Preset</span>
+                        </Button>
+                      </div>
+
+                      {/* Preset 2: Local LAN / Studio Standard */}
+                      <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 text-xs space-y-2.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5 font-bold text-foreground">
+                            <Tv className="w-4 h-4 text-primary" />
+                            <span>Studio Standard (1080p @ 2500kbps)</span>
+                          </div>
+                          <Badge variant="outline" className="text-[9px]">
+                            HIGH SPEED FIBER
+                          </Badge>
+                        </div>
+                        <p className="text-[11px] text-muted-foreground leading-relaxed">
+                          High-definition feed for local stage control monitors or fiber network connections.
+                        </p>
+                        <ul className="text-[11px] font-mono space-y-1 text-muted-foreground bg-background/50 p-2.5 rounded-lg border border-border/40">
+                          <li>• Resolution: <strong>1920x1080 (1080p 30/60fps)</strong></li>
+                          <li>• Bitrate: <strong>2,500 - 3,500 kbps (CBR)</strong></li>
+                          <li>• Audio: <strong>128 kbps (AAC stereo)</strong></li>
+                          <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
+                        </ul>
+                        <Button
+                          type="button"
+                          size="xs"
+                          variant="outline"
+                          onClick={() => {
+                            const config = `OBS Studio 1080p Preset:
+Resolution: 1920x1080 (1080p)
+Bitrate: 2500 Kbps (CBR)
+Audio: 128 Kbps AAC
+Keyframe Interval: 2s
+Max B-frames: 0
+Tune: zerolatency`;
+                            navigator.clipboard.writeText(config);
+                            toast.success('1080p OBS preset copied!');
+                          }}
+                          className="w-full gap-1.5 text-xs"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy 1080p Preset</span>
+                        </Button>
+                      </div>
                     </div>
-                    <ul className="list-disc list-inside text-[11px] text-muted-foreground space-y-1 pl-1">
-                      <li><strong className="text-foreground">Max B-frames: 0</strong> (OBS: <em>Settings → Output → Advanced → Max B-frames: 0</em>)</li>
-                      <li><strong className="text-foreground">Tune: zerolatency</strong></li>
-                      <li><strong className="text-foreground">Keyframe Interval: 1s or 2s</strong></li>
-                    </ul>
                   </div>
                 </CardContent>
               </Card>

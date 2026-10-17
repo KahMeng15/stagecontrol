@@ -32,11 +32,14 @@ webrtcLocalTCPAddress: :8189
 webrtcAdditionalHosts: ['localhost', '127.0.0.1']
 
 
-# HLS Server (recording playback / seekable fallback)
+# HLS Server (rock-solid buffered playback for 4G / mobile / remote viewers)
 hls: yes
 hlsAddress: :8888
 hlsAllowOrigins: ['*']
 hlsAlwaysRemux: yes
+hlsVariant: fmp4
+hlsSegmentDuration: 2s
+hlsSegmentCount: 7
 
 # HTTP Playback Server for recorded fMP4 segments
 playback: yes

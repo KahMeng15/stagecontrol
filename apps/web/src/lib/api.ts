@@ -79,6 +79,7 @@ export interface StreamStatus {
   hls_url: string;
   hls_playlist_url: string;
   stream_key?: string | null;
+  ready_time?: string | null;
 }
 
 export interface Recording {
@@ -328,6 +329,11 @@ export const api = {
   deleteRecording: (eventId: string, recordingId: string) =>
     request<void>(`/events/${eventId}/recordings/${recordingId}`, {
       method: 'DELETE',
+    }),
+
+  optimizeRecording: (eventId: string, recordingId: string) =>
+    request<Recording>(`/events/${eventId}/recordings/${recordingId}/optimize`, {
+      method: 'POST',
     }),
 
   // Video Timeline Chapters & Markers

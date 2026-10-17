@@ -56,6 +56,8 @@ export function LivePlayer({
   const [loadingStatus, setLoadingStatus] = useState(true);
   // Default to HLS because standard OBS encoders output H.264 High Profile with B-frames and AAC audio
   const [playerMode, setPlayerMode] = useState<'hls' | 'webrtc'>('hls');
+  const [reloadKey, setReloadKey] = useState(0);
+  const [showBandwidthGuide, setShowBandwidthGuide] = useState(false);
   const [copiedRtmp, setCopiedRtmp] = useState(false);
   const [showBFrameHint, setShowBFrameHint] = useState(false);
 
@@ -81,6 +83,7 @@ export function LivePlayer({
   const transcriptContainerRef = useRef<HTMLDivElement>(null);
   const captionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const lastReadyTimeRef = useRef<string | null>(null);
 
   // Poll stream status every 3 seconds
   const fetchStatus = useCallback(async () => {
@@ -88,6 +91,13 @@ export function LivePlayer({
       const status = await api.getStreamStatus(eventId);
       setStreamStatus(status);
       setLoadingStatus(false);
+      if (status.ready_time && lastReadyTimeRef.current && status.ready_time !== lastReadyTimeRef.current) {
+        // Stream session restarted/reconnected in MediaMTX: reload iframe to avoid stale HLS 404s
+        setReloadKey((k) => k + 1);
+      }
+      if (status.ready_time) {
+        lastReadyTimeRef.current = status.ready_time;
+      }
     } catch {
       setLoadingStatus(false);
     }
@@ -348,6 +358,36 @@ export function LivePlayer({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* 4G / Low Bandwidth OBS Guide Button */}
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => setShowBandwidthGuide(true)}
+            className="gap-1.5 text-[11px] text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
+            title="Recommended 500kbps 720p settings to prevent 4G lag"
+          >
+            <Zap className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">4G Preset (500kbps)</span>
+          </Button>
+
+          {/* Quick Reload Stream (re-syncs 4G drops) */}
+          {isLive && (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => {
+                setReloadKey((prev) => prev + 1);
+                toast.success('Reloading live stream feed...');
+              }}
+              title="Reload live stream feed (re-syncs video after network drop)"
+              className="rounded"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+            </Button>
+          )}
+
           {/* Transcript Feed Drawer Toggle */}
           <Button
             type="button"
@@ -481,7 +521,7 @@ export function LivePlayer({
         {/* Active Stream Iframe */}
         {isLive && currentStreamUrl ? (
           <iframe
-            key={`${playerMode}-${currentStreamUrl}`}
+            key={`${playerMode}-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
             src={currentStreamUrl}
             title="StageControl Program Feed"
             className="w-full h-full border-0 bg-black absolute inset-0"
@@ -914,6 +954,92 @@ export function LivePlayer({
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* 4G / Low Bandwidth Optimization Modal */}
+      <Dialog open={showBandwidthGuide} onOpenChange={setShowBandwidthGuide}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <Zap className="w-4 h-4" />
+              </div>
+              <div>
+                <DialogTitle className="text-base font-bold">4G Multi-Viewer Stream Optimization</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Max 500kbps 720p profile to prevent mobile buffering and lag.
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2 text-xs">
+            <div className="p-3 rounded-lg bg-muted/40 border border-border/60 text-muted-foreground leading-relaxed text-[11px]">
+              OBS defaults to <strong className="text-foreground">6,000 kbps (1080p)</strong>. When multiple viewers watch on 4G/LTE mobile networks, every viewer pulls 6 Mbps. 4G networks quickly drop frames and buffer.
+              Applying this <strong className="text-primary">720p @ 500kbps preset</strong> reduces server outbound bandwidth by 90% so all viewers stream smoothly.
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-muted/20 p-3 rounded-xl border border-border/50">
+              <div>
+                <span className="text-muted-foreground text-[10px] block">OUTPUT RESOLUTION</span>
+                <span className="font-bold text-foreground">1280x720 (720p)</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground text-[10px] block">VIDEO BITRATE</span>
+                <span className="font-bold text-emerald-400">500 kbps (CBR)</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground text-[10px] block">AUDIO BITRATE</span>
+                <span className="font-bold text-foreground">64 kbps (AAC)</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground text-[10px] block">KEYFRAME INTERVAL</span>
+                <span className="font-bold text-foreground">2 seconds</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground text-[10px] block">MAX B-FRAMES</span>
+                <span className="font-bold text-foreground">0 (Zero Latency)</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground text-[10px] block">EST. BANDWIDTH / VIEWER</span>
+                <span className="font-bold text-emerald-400">~0.56 Mbps</span>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const obsConfig = `OBS Studio 4G Low-Bandwidth Preset:
+• Base Canvas: 1920x1080 -> Output Resolution: 1280x720 (720p)
+• Rate Control: CBR
+• Video Bitrate: 500 Kbps (Max 800 Kbps)
+• Keyframe Interval: 2s
+• CPU Usage: veryfast
+• Profile: Main
+• Tune: zerolatency
+• Max B-frames: 0
+• Audio Bitrate: 64 Kbps AAC`;
+                navigator.clipboard.writeText(obsConfig);
+                toast.success('OBS 500kbps 720p preset copied to clipboard');
+              }}
+              className="gap-1.5 text-xs"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy OBS Preset</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => setShowBandwidthGuide(false)}
+            >
+              Done
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -138,55 +138,74 @@ function normalizeText(text: string, stripActions: boolean = false): string {
 
 function wordRatio(a: string, b: string): number {
   if (a === b) return 1.0;
-  if (a.length < 3 || b.length < 3) return 0.0;
-  const pairsA = new Set<string>();
-  for (let i = 0; i < a.length - 1; i++) pairsA.add(a.slice(i, i + 2));
+  const lenA = a.length;
+  const lenB = b.length;
+  if (lenA < 3 || lenB < 3 || Math.abs(lenA - lenB) > 3) return 0.0;
   let hits = 0;
-  for (let i = 0; i < b.length - 1; i++) {
-    if (pairsA.has(b.slice(i, i + 2))) hits++;
+  const maxPairs = lenA - 1;
+  for (let i = 0; i < maxPairs; i++) {
+    const p = a.slice(i, i + 2);
+    if (b.includes(p)) hits++;
   }
-  return (2.0 * hits) / (a.length - 1 + b.length - 1);
+  return (2.0 * hits) / (lenA - 1 + lenB - 1);
 }
 
-// Client-side similarity calculation with wildcard tolerance
-function computeSimilarity(spoken: string, dialogue: string): number {
-  const normSpk = normalizeText(spoken, false);
+// Fast substring & keyword pre-filter to reject non-matching blocks in sub-microseconds
+function quickOverlap(spkWords: string[], targetText: string): boolean {
+  if (!targetText || spkWords.length === 0) return false;
+  const lower = targetText.toLowerCase();
+  for (let i = 0; i < spkWords.length; i++) {
+    const w = spkWords[i];
+    if (w.length >= 3 && lower.includes(w)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Client-side similarity calculation with wildcard tolerance (optimized for 60fps event loop)
+function computeSimilarity(
+  spoken: string,
+  dialogue: string,
+  preNormSpk?: string,
+  preSpkWords?: string[]
+): number {
+  const normSpk = preNormSpk || normalizeText(spoken, false);
   let normDiag = normalizeText(dialogue, true);
   if (!normDiag) {
     normDiag = normalizeText(dialogue, false);
   }
   if (!normSpk || !normDiag) return 0;
 
-  const spkWords = normSpk.split(' ').filter((w) => w.length > 1);
+  const spkWords = preSpkWords || normSpk.split(' ').filter((w) => w.length > 1);
   const diagWords = normDiag.split(' ').filter((w) => w.length > 1);
   if (spkWords.length === 0 || diagWords.length === 0) return 0;
 
   const spkLen = spkWords.length;
   const diagLen = diagWords.length;
 
-  // Whole-phrase word boundary match
-  const escapedSpk = normSpk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const spkPattern = new RegExp(`(?:\\b|^)${escapedSpk}(?:\\b|$)`, 'i');
-  if (spkLen >= 3 && spkPattern.test(normDiag)) return 0.95;
-
-  const escapedDiag = normDiag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const diagPattern = new RegExp(`(?:\\b|^)${escapedDiag}(?:\\b|$)`, 'i');
-  if (diagLen >= 3 && diagPattern.test(normSpk)) return 0.90;
+  // Whole-phrase word containment match
+  if (spkLen >= 3 && normDiag.includes(normSpk)) return 0.95;
+  if (diagLen >= 3 && normSpk.includes(normDiag)) return 0.90;
 
   // Short line guard: prevent a long sentence from matching "No..." or "I wish!"
   if (diagLen <= 2 && spkLen > 3) return 0.0;
 
   // Word-level fuzzy containment
   let matchedSpk = 0.0;
-  for (const sw of spkWords) {
+  for (let i = 0; i < spkWords.length; i++) {
+    const sw = spkWords[i];
     let bestW = 0.0;
-    for (const dw of diagWords) {
+    for (let j = 0; j < diagWords.length; j++) {
+      const dw = diagWords[j];
       if (sw === dw) {
         bestW = 1.0;
         break;
       } else if (sw.length >= 4 && dw.length >= 4) {
         const sim = wordRatio(sw, dw);
-        if (sim >= 0.75) bestW = Math.max(bestW, sim);
+        if (sim >= 0.75) {
+          bestW = Math.max(bestW, sim);
+        }
       }
     }
     if (bestW >= 0.75) matchedSpk += bestW;
@@ -200,12 +219,17 @@ function computeSimilarity(spoken: string, dialogue: string): number {
     for (let i = 0; i <= diagLen - spkLen; i++) {
       const windowWords = diagWords.slice(i, i + spkLen + 2);
       let winHits = 0;
-      for (const sw of spkWords) {
+      for (let s = 0; s < spkWords.length; s++) {
+        const sw = spkWords[s];
         if (windowWords.includes(sw)) {
           winHits += 1.0;
         } else if (sw.length >= 4) {
-          if (windowWords.some((ww) => ww.length >= 4 && wordRatio(sw, ww) >= 0.72)) {
-            winHits += 0.85;
+          for (let w = 0; w < windowWords.length; w++) {
+            const ww = windowWords[w];
+            if (ww.length >= 4 && wordRatio(sw, ww) >= 0.72) {
+              winHits += 0.85;
+              break;
+            }
           }
         }
       }
@@ -214,12 +238,17 @@ function computeSimilarity(spoken: string, dialogue: string): number {
     }
   } else {
     let hits = 0;
-    for (const sw of spkWords) {
+    for (let s = 0; s < spkWords.length; s++) {
+      const sw = spkWords[s];
       if (diagWords.includes(sw)) {
         hits += 1.0;
       } else if (sw.length >= 4) {
-        if (diagWords.some((dw) => dw.length >= 4 && wordRatio(sw, dw) >= 0.72)) {
-          hits += 0.85;
+        for (let d = 0; d < diagWords.length; d++) {
+          const dw = diagWords[d];
+          if (dw.length >= 4 && wordRatio(sw, dw) >= 0.72) {
+            hits += 0.85;
+            break;
+          }
         }
       }
     }
@@ -502,6 +531,10 @@ export default function ScriptTracker({
       setIsMusicActive(false);
     }
 
+    const normSpk = normalizeText(spoken, false);
+    const spkWords = normSpk.split(' ').filter((w) => w.length > 1);
+    if (spkWords.length < 2) return;
+
     let bestId: string | null = null;
     let bestScore = 0;
 
@@ -512,7 +545,7 @@ export default function ScriptTracker({
       for (let i = start; i <= end; i++) {
         const blk = allBlocks[i];
         if (!blk.dialogue) continue;
-        const score = computeSimilarity(spoken, blk.dialogue) + 0.08;
+        const score = computeSimilarity(spoken, blk.dialogue, normSpk, spkWords) + 0.08;
         if (score > bestScore) {
           bestScore = score;
           bestId = blk.id;
@@ -522,9 +555,11 @@ export default function ScriptTracker({
 
     // Global fallback
     if (bestScore < (wildcardThreshold / 100)) {
-      for (const blk of allBlocks) {
+      for (let i = 0; i < allBlocks.length; i++) {
+        const blk = allBlocks[i];
         if (!blk.dialogue) continue;
-        const score = computeSimilarity(spoken, blk.dialogue);
+        if (!quickOverlap(spkWords, blk.dialogue)) continue;
+        const score = computeSimilarity(spoken, blk.dialogue, normSpk, spkWords);
         if (score > bestScore) {
           bestScore = score;
           bestId = blk.id;
@@ -633,10 +668,12 @@ export default function ScriptTracker({
               const isSyncOn = speechSyncEnabledRef.current;
 
               if (isSyncOn && currentBlocks.length > 0 && spoken) {
+                const normSpk = normalizeText(spoken, false);
+                const spkWords = normSpk.split(' ').filter((w) => w.length > 1);
+                if (spkWords.length < 2) return;
+
                 const currBlockId = activeBlockIdRef.current;
                 const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
-
-                if (spoken.split(' ').length < 2) return;
 
                 const thresholdFraction = wildcardThresholdRef.current / 100.0;
                 const now = Date.now();
@@ -655,7 +692,7 @@ export default function ScriptTracker({
                     const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
                     if (!targetText) continue;
 
-                    let score = computeSimilarity(spoken, targetText);
+                    let score = computeSimilarity(spoken, targetText, normSpk, spkWords);
                     const diff = blk.order_index - currIdx;
                     if (diff >= 0 && diff <= 2) score += 0.06;
                     else if (diff >= 3 && diff <= 5) score += 0.03;
@@ -695,7 +732,10 @@ export default function ScriptTracker({
                   const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
                   if (!targetText) continue;
 
-                  const score = computeSimilarity(spoken, targetText);
+                  // Ultra-fast keyword/sub-string pre-check before expensive fuzzy comparison
+                  if (!quickOverlap(spkWords, targetText)) continue;
+
+                  const score = computeSimilarity(spoken, targetText, normSpk, spkWords);
                   if (score > bestGlobalScore) {
                     bestGlobalScore = score;
                     bestGlobalMatch = blk;
