@@ -3,7 +3,7 @@ import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
 from app.config import RECORDINGS_DIR, settings
@@ -111,6 +111,7 @@ async def get_stream_status(
     rtmp_url = f"rtmp://{raw_host}:1935/live"
     webrtc_url = f"http://{raw_host}:8889/live/{stream_key}"
     webrtc_whep_url = f"http://{raw_host}:8889/live/{stream_key}/whep"
+    webrtc_whip_url = f"http://{raw_host}:8889/live/{stream_key}/whip"
     hls_url = f"http://{raw_host}:8888/live/{stream_key}"
     hls_playlist_url = f"http://{raw_host}:8888/live/{stream_key}/index.m3u8"
 
@@ -125,11 +126,88 @@ async def get_stream_status(
         rtmp_url=rtmp_url,
         webrtc_url=webrtc_url,
         webrtc_whep_url=webrtc_whep_url,
+        webrtc_whip_url=webrtc_whip_url,
         hls_url=hls_url,
         hls_playlist_url=hls_playlist_url,
         stream_key=stream_key if can_view_key else None,
         ready_time=ready_time
     )
+
+@router.post("/whip")
+async def whip_publish(
+    request: Request,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+):
+    """
+    WHIP (WebRTC HTTP Ingestion Protocol) endpoint to start publishing from browser / mobile.
+    Proxies the SDP offer to MediaMTX WHIP ingest, and maps candidates if needed for LAN devices.
+    """
+    event, membership = event_and_member
+    if not has_sufficient_role(membership.role, EventRole.CREW):
+        raise HTTPException(status_code=403, detail="Insufficient permissions to broadcast")
+
+    stream_key = event.stream_key
+    body = await request.body()
+    content_type = request.headers.get("content-type", "application/sdp")
+
+    # Connect to MediaMTX container WHIP endpoint
+    mediamtx_whip_url = f"http://mediamtx:8889/live/{stream_key}/whip"
+    client_host = request.url.hostname or "localhost"
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                mediamtx_whip_url,
+                content=body,
+                headers={"Content-Type": content_type}
+            )
+
+            resp_headers: dict[str, str] = {}
+            for h in ["Location", "ETag", "ID", "Accept-Patch", "Link", "Access-Control-Expose-Headers"]:
+                if h in resp.headers:
+                    if h == "Location":
+                        session_id = resp.headers[h].split("/")[-1]
+                        resp_headers["Location"] = f"/api/events/{event.id}/whip/{session_id}"
+                    else:
+                        resp_headers[h] = resp.headers[h]
+
+            # In the SDP answer, if client connected from a LAN IP or hostname,
+            # duplicate 127.0.0.1 host candidates with client_host so mobile devices on LAN can resolve ICE
+            sdp_answer = resp.text
+            if client_host not in ["localhost", "127.0.0.1"]:
+                lines = sdp_answer.splitlines()
+                new_lines = []
+                for line in lines:
+                    new_lines.append(line)
+                    if line.startswith("a=candidate:") and " 8189 typ host" in line and "127.0.0.1" in line:
+                        new_lines.append(line.replace("127.0.0.1", client_host))
+                sdp_answer = "\r\n".join(new_lines) + "\r\n"
+
+            return Response(
+                content=sdp_answer,
+                status_code=resp.status_code,
+                media_type="application/sdp",
+                headers=resp_headers
+            )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to connect to MediaMTX WHIP: {str(e)}")
+
+@router.delete("/whip/{session_id}")
+async def whip_terminate(
+    session_id: str,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+):
+    """Terminates an active browser WHIP publishing session."""
+    event, _ = event_and_member
+    stream_key = event.stream_key
+    mediamtx_whip_session_url = f"http://mediamtx:8889/live/{stream_key}/whip/{session_id}"
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.delete(mediamtx_whip_session_url)
+            return Response(status_code=resp.status_code)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to terminate WHIP session: {str(e)}")
 
 def format_friendly_recording_title(file_stem: str, file_mtime: datetime | None = None) -> str:
     """

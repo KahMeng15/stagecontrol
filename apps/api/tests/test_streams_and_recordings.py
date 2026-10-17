@@ -88,6 +88,7 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     status_data = resp.json()
     assert "is_live" in status_data
     assert "webrtc_whep_url" in status_data
+    assert "webrtc_whip_url" in status_data
     assert "hls_playlist_url" in status_data
     assert "rtmp_url" in status_data
     assert status_data["stream_key"] == event.stream_key
@@ -214,3 +215,72 @@ def test_streams_and_recordings_lifecycle(client, test_db):
     # Clean up mock directory
     if event_rec_dir.exists():
         shutil.rmtree(event_rec_dir, ignore_errors=True)
+
+def test_whip_endpoints(client, test_db):
+    """Test WHIP browser streaming ingest and session termination endpoints."""
+    from unittest.mock import AsyncMock, patch, MagicMock
+
+    user = User(
+        username="whip_admin",
+        email="whip_admin@stageflow.io",
+        hashed_password=hash_password("adminpass123"),
+        is_superadmin=True
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    token = create_access_token(user.id, extra_claims={"sub": user.id, "email": user.email, "role": "admin"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    event = Event(
+        name="WHIP Live Broadcast Test",
+        slug="whip-live-test",
+        created_by_id=user.id,
+        stream_key="whip-key-12345"
+    )
+    test_db.add(event)
+    test_db.commit()
+
+    membership = Membership(
+        user_id=user.id,
+        event_id=event.id,
+        role=EventRole.STAGE_MANAGER.value,
+        callsign="Director"
+    )
+    test_db.add(membership)
+    test_db.commit()
+
+    mock_resp = MagicMock()
+    mock_resp.status_code = 201
+    mock_resp.headers = {
+        "Location": "/live/whip-key-12345/whip/session-abc-123",
+        "Content-Type": "application/sdp"
+    }
+    mock_resp.text = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\na=candidate:1 1 udp 2130706431 127.0.0.1 8189 typ host\r\n"
+
+    mock_del_resp = MagicMock()
+    mock_del_resp.status_code = 200
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post, \
+         patch("httpx.AsyncClient.delete", new_callable=AsyncMock) as mock_delete:
+        mock_post.return_value = mock_resp
+        mock_delete.return_value = mock_del_resp
+
+        # 1. Test POST /whip with SDP offer
+        sample_offer = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+        post_resp = client.post(
+            f"/api/events/{event.id}/whip",
+            content=sample_offer,
+            headers={**headers, "Content-Type": "application/sdp"}
+        )
+        assert post_resp.status_code == 201
+        assert "Location" in post_resp.headers
+        assert f"/api/events/{event.id}/whip/session-abc-123" in post_resp.headers["Location"]
+        assert "application/sdp" in post_resp.headers["Content-Type"]
+
+        # 2. Test DELETE /whip/{session_id}
+        del_resp = client.delete(
+            f"/api/events/{event.id}/whip/session-abc-123",
+            headers=headers
+        )
+        assert del_resp.status_code == 200

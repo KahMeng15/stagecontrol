@@ -8,6 +8,7 @@ import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
+import { BrowserStreamStudio } from '@/components/video/BrowserStreamStudio';
 import ScriptTracker from '@/components/script/ScriptTracker';
 import { useWalkieTalkie } from '@/components/walkie/useWalkieTalkie';
 import { useAudioDucking } from '@/components/walkie/useAudioDucking';
@@ -67,6 +68,7 @@ import {
   Film,
   Zap,
   Loader2,
+  Camera,
 } from 'lucide-react';
 
 function EventContent() {
@@ -81,6 +83,7 @@ function EventContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew'>('control');
+  const [streamSourceMode, setStreamSourceMode] = useState<'obs' | 'browser'>('obs');
 
   // Copy state
   const [copiedKey, setCopiedKey] = useState(false);
@@ -457,7 +460,7 @@ function EventContent() {
             {isSMOrAdmin && (
               <TabsTrigger value="stream" className="gap-2 text-xs font-semibold py-2">
                 <Tv className="w-4 h-4" />
-                <span>OBS & Video Setup</span>
+                <span>Video Setup (OBS / Mobile)</span>
               </TabsTrigger>
             )}
 
@@ -577,198 +580,250 @@ function EventContent() {
             </TabsContent>
           )}
 
-          {/* Tab 4: OBS Stream Setup */}
+          {/* Tab 5: Video Stream Setup */}
           {isSMOrAdmin && (
-            <TabsContent value="stream" className="max-w-3xl space-y-6 mt-0">
-              <Card>
-                <CardHeader>
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
-                      <Key className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <CardTitle className="text-base font-bold">OBS Studio Streaming Credentials</CardTitle>
-                      <CardDescription className="text-xs">
-                        Use these credentials in OBS Studio or any RTMP/WHIP streaming software.
-                      </CardDescription>
-                    </div>
-                  </div>
-                </CardHeader>
+            <TabsContent value="stream" className="max-w-4xl space-y-6 mt-0">
+              {/* Option Switcher: OBS Studio vs Browser & Mobile Camera Studio */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-muted/40 border border-border/80">
+                <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => setStreamSourceMode('obs')}
+                    className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+                      streamSourceMode === 'obs'
+                        ? 'bg-background text-foreground shadow-sm border border-border/60'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Tv className="w-4 h-4 text-primary" />
+                    <span>OBS Studio (RTMP / WHIP)</span>
+                  </button>
 
-                <CardContent className="space-y-4">
-                  {/* RTMP Server URL */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Stream Server URL (RTMP)
-                    </label>
-                    <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setStreamSourceMode('browser')}
+                    className={`flex-1 sm:flex-initial flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all ${
+                      streamSourceMode === 'browser'
+                        ? 'bg-background text-foreground shadow-sm border border-border/60'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Camera className="w-4 h-4 text-blue-400" />
+                    <span>Browser & Mobile Studio</span>
+                    <Badge variant="outline" className="text-[9px] bg-blue-500/10 text-blue-400 border-blue-500/30 font-bold ml-1">
+                      DIRECT
+                    </Badge>
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-muted-foreground px-3 hidden md:block">
+                  {streamSourceMode === 'obs'
+                    ? 'Use OBS Studio or hardware video switcher'
+                    : 'Stream from this computer or scan QR on mobile'}
+                </div>
+              </div>
+
+              {/* View 1: Browser & Mobile Studio */}
+              {streamSourceMode === 'browser' && (
+                <BrowserStreamStudio
+                  eventId={event.id}
+                  streamKey={event.stream_key}
+                  eventName={event.name}
+                />
+              )}
+
+              {/* View 2: OBS Studio Credentials */}
+              {streamSourceMode === 'obs' && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                        <Key className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <CardTitle className="text-base font-bold">OBS Studio Streaming Credentials</CardTitle>
+                        <CardDescription className="text-xs">
+                          Use these credentials in OBS Studio or any RTMP/WHIP streaming software.
+                        </CardDescription>
+                      </div>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="space-y-4">
+                    {/* RTMP Server URL */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Stream Server URL (RTMP)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="text"
+                          readOnly
+                          value="rtmp://localhost:1935/live"
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            navigator.clipboard.writeText('rtmp://localhost:1935/live');
+                            toast.success('RTMP server URL copied');
+                          }}
+                          className="gap-1.5 shrink-0"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </Button>
+                      </div>
+                    </div>
+
+                    {/* Stream Key */}
+                    <div className="space-y-1.5">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        Stream Key (Secret)
+                      </label>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="password"
+                          readOnly
+                          value={event.stream_key || '••••••••••••••••••••••••'}
+                          className="font-mono text-xs text-primary"
+                        />
+                        <Button
+                          type="button"
+                          onClick={handleCopyStreamKey}
+                          className="gap-1.5 shrink-0 shadow-md shadow-primary/20"
+                        >
+                          {copiedKey ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedKey ? 'Copied' : 'Copy Key'}</span>
+                        </Button>
+                        {isAdmin && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            onClick={handleRegenerateKey}
+                            disabled={regenerating}
+                            title="Regenerate Stream Key"
+                            className="shrink-0 hover:text-destructive hover:border-destructive/40"
+                          >
+                            <RefreshCw className={`w-4 h-4 ${regenerating ? 'animate-spin' : ''}`} />
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Never share this key publicly. Only Admins and Stage Managers can view or regenerate this key.
+                      </p>
+                    </div>
+
+                    {/* WebRTC WHIP URL */}
+                    <div className="pt-4 border-t border-border/50 space-y-1.5">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                        WHIP Ingest URL (Ultra-low latency WebRTC streaming)
+                      </label>
                       <Input
                         type="text"
                         readOnly
-                        value="rtmp://localhost:1935/live"
-                        className="font-mono text-xs"
+                        value={`http://localhost:8889/live/${event.stream_key}/whip`}
+                        className="font-mono text-xs text-muted-foreground"
                       />
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        onClick={() => {
-                          navigator.clipboard.writeText('rtmp://localhost:1935/live');
-                          toast.success('RTMP server URL copied');
-                        }}
-                        className="gap-1.5 shrink-0"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                        <span>Copy</span>
-                      </Button>
                     </div>
-                  </div>
 
-                  {/* Stream Key */}
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      Stream Key (Secret)
-                    </label>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="password"
-                        readOnly
-                        value={event.stream_key || '••••••••••••••••••••••••'}
-                        className="font-mono text-xs text-primary"
-                      />
-                      <Button
-                        type="button"
-                        onClick={handleCopyStreamKey}
-                        className="gap-1.5 shrink-0 shadow-md shadow-primary/20"
-                      >
-                        {copiedKey ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        <span>{copiedKey ? 'Copied' : 'Copy Key'}</span>
-                      </Button>
-                      {isAdmin && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          onClick={handleRegenerateKey}
-                          disabled={regenerating}
-                          title="Regenerate Stream Key"
-                          className="shrink-0 hover:text-destructive hover:border-destructive/40"
-                        >
-                          <RefreshCw className={`w-4 h-4 ${regenerating ? 'animate-spin' : ''}`} />
-                        </Button>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">
-                      Never share this key publicly. Only Admins and Stage Managers can view or regenerate this key.
-                    </p>
-                  </div>
+                    {/* OBS Profiles & Bandwidth Presets */}
+                    <div className="space-y-3 pt-2">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
+                        Recommended Encoder Presets (Choose based on your network):
+                      </span>
 
-                  {/* WebRTC WHIP URL */}
-                  <div className="pt-4 border-t border-border/50 space-y-1.5">
-                    <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                      WHIP Ingest URL (Ultra-low latency WebRTC streaming)
-                    </label>
-                    <Input
-                      type="text"
-                      readOnly
-                      value={`http://localhost:8889/live/${event.stream_key}/whip`}
-                      className="font-mono text-xs text-muted-foreground"
-                    />
-                  </div>
-
-                  {/* OBS Profiles & Bandwidth Presets */}
-                  <div className="space-y-3 pt-2">
-                    <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider block">
-                      Recommended Encoder Presets (Choose based on your network):
-                    </span>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      {/* Preset 1: 4G / Mobile Multi-Viewer (Recommended) */}
-                      <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/25 text-xs space-y-2.5 relative group">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 font-bold text-emerald-400">
-                            <Zap className="w-4 h-4 text-emerald-400" />
-                            <span>4G / Multi-Viewer (720p @ 500kbps)</span>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {/* Preset 1: 4G / Mobile Multi-Viewer (Recommended) */}
+                        <div className="p-3.5 rounded-xl bg-emerald-500/5 border border-emerald-500/25 text-xs space-y-2.5 relative group">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold text-emerald-400">
+                              <Zap className="w-4 h-4 text-emerald-400" />
+                              <span>4G / Multi-Viewer (720p @ 500kbps)</span>
+                            </div>
+                            <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold">
+                              RECOMMENDED
+                            </Badge>
                           </div>
-                          <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold">
-                            RECOMMENDED
-                          </Badge>
-                        </div>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed">
-                          Saves 90% bandwidth. Ensures team members on 4G / LTE mobile connections watch without buffering.
-                        </p>
-                        <ul className="text-[11px] font-mono space-y-1 text-slate-300 bg-background/50 p-2.5 rounded-lg border border-border/40">
-                          <li>• Resolution: <strong>1280x720 (720p 30fps)</strong></li>
-                          <li>• Bitrate: <strong className="text-emerald-400">500 kbps (CBR)</strong></li>
-                          <li>• Audio: <strong>64 kbps (AAC stereo)</strong></li>
-                          <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
-                        </ul>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="secondary"
-                          onClick={() => {
-                            const config = `OBS Low-Bandwidth 4G Preset:
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            Saves 90% bandwidth. Ensures team members on 4G / LTE mobile connections watch without buffering.
+                          </p>
+                          <ul className="text-[11px] font-mono space-y-1 text-slate-300 bg-background/50 p-2.5 rounded-lg border border-border/40">
+                            <li>• Resolution: <strong>1280x720 (720p 30fps)</strong></li>
+                            <li>• Bitrate: <strong className="text-emerald-400">500 kbps (CBR)</strong></li>
+                            <li>• Audio: <strong>64 kbps (AAC stereo)</strong></li>
+                            <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
+                          </ul>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="secondary"
+                            onClick={() => {
+                              const config = `OBS Low-Bandwidth 4G Preset:
 Resolution: 1280x720 (720p)
 Bitrate: 500 Kbps (CBR)
 Audio: 64 Kbps AAC
 Keyframe Interval: 2s
 Max B-frames: 0
 Tune: zerolatency`;
-                            navigator.clipboard.writeText(config);
-                            toast.success('4G 500kbps OBS preset copied!');
-                          }}
-                          className="w-full gap-1.5 text-xs font-semibold"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>Copy 500kbps Preset</span>
-                        </Button>
-                      </div>
-
-                      {/* Preset 2: Local LAN / Studio Standard */}
-                      <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 text-xs space-y-2.5">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-1.5 font-bold text-foreground">
-                            <Tv className="w-4 h-4 text-primary" />
-                            <span>Studio Standard (1080p @ 2500kbps)</span>
-                          </div>
-                          <Badge variant="outline" className="text-[9px]">
-                            HIGH SPEED FIBER
-                          </Badge>
+                              navigator.clipboard.writeText(config);
+                              toast.success('4G 500kbps OBS preset copied!');
+                            }}
+                            className="w-full gap-1.5 text-xs font-semibold"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy 500kbps Preset</span>
+                          </Button>
                         </div>
-                        <p className="text-[11px] text-muted-foreground leading-relaxed">
-                          High-definition feed for local stage control monitors or fiber network connections.
-                        </p>
-                        <ul className="text-[11px] font-mono space-y-1 text-muted-foreground bg-background/50 p-2.5 rounded-lg border border-border/40">
-                          <li>• Resolution: <strong>1920x1080 (1080p 30/60fps)</strong></li>
-                          <li>• Bitrate: <strong>2,500 - 3,500 kbps (CBR)</strong></li>
-                          <li>• Audio: <strong>128 kbps (AAC stereo)</strong></li>
-                          <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
-                        </ul>
-                        <Button
-                          type="button"
-                          size="xs"
-                          variant="outline"
-                          onClick={() => {
-                            const config = `OBS Studio 1080p Preset:
+
+                        {/* Preset 2: Local LAN / Studio Standard */}
+                        <div className="p-3.5 rounded-xl bg-muted/40 border border-border/60 text-xs space-y-2.5">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 font-bold text-foreground">
+                              <Tv className="w-4 h-4 text-primary" />
+                              <span>Studio Standard (1080p @ 2500kbps)</span>
+                            </div>
+                            <Badge variant="outline" className="text-[9px]">
+                              HIGH SPEED FIBER
+                            </Badge>
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            High-definition feed for local stage control monitors or fiber network connections.
+                          </p>
+                          <ul className="text-[11px] font-mono space-y-1 text-muted-foreground bg-background/50 p-2.5 rounded-lg border border-border/40">
+                            <li>• Resolution: <strong>1920x1080 (1080p 30/60fps)</strong></li>
+                            <li>• Bitrate: <strong>2,500 - 3,500 kbps (CBR)</strong></li>
+                            <li>• Audio: <strong>128 kbps (AAC stereo)</strong></li>
+                            <li>• Keyframe: <strong>2s</strong> | Max B-frames: <strong>0</strong></li>
+                          </ul>
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="outline"
+                            onClick={() => {
+                              const config = `OBS Studio 1080p Preset:
 Resolution: 1920x1080 (1080p)
 Bitrate: 2500 Kbps (CBR)
 Audio: 128 Kbps AAC
 Keyframe Interval: 2s
 Max B-frames: 0
 Tune: zerolatency`;
-                            navigator.clipboard.writeText(config);
-                            toast.success('1080p OBS preset copied!');
-                          }}
-                          className="w-full gap-1.5 text-xs"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>Copy 1080p Preset</span>
-                        </Button>
+                              navigator.clipboard.writeText(config);
+                              toast.success('1080p OBS preset copied!');
+                            }}
+                            className="w-full gap-1.5 text-xs"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>Copy 1080p Preset</span>
+                          </Button>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Public 6-Digit PIN Card */}
               <Card>

@@ -76,6 +76,7 @@ export interface StreamStatus {
   rtmp_url: string;
   webrtc_url: string;
   webrtc_whep_url: string;
+  webrtc_whip_url?: string;
   hls_url: string;
   hls_playlist_url: string;
   stream_key?: string | null;
@@ -317,6 +318,37 @@ export const api = {
   // Live Streaming & Recordings (Milestone 2)
   getStreamStatus: (eventId: string) =>
     request<StreamStatus>(`/events/${eventId}/stream-status`),
+
+  postWhipOffer: async (eventId: string, sdp: string): Promise<{ sdp: string; location?: string }> => {
+    const token = getStoredToken();
+    const headers: HeadersInit = {
+      'Content-Type': 'application/sdp',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    const response = await fetch(`${API_BASE}/events/${eventId}/whip`, {
+      method: 'POST',
+      headers,
+      body: sdp,
+    });
+    if (!response.ok) {
+      const err = await response.text().catch(() => '');
+      throw new Error(err || `WHIP failed with status ${response.status}`);
+    }
+    const location = response.headers.get('Location') || undefined;
+    const answerSdp = await response.text();
+    return { sdp: answerSdp, location };
+  },
+
+  deleteWhipSession: async (eventId: string, sessionId: string): Promise<void> => {
+    const token = getStoredToken();
+    const headers: HeadersInit = {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    await fetch(`${API_BASE}/events/${eventId}/whip/${sessionId}`, {
+      method: 'DELETE',
+      headers,
+    }).catch(() => {});
+  },
 
   listRecordings: (eventId: string) =>
     request<Recording[]>(`/events/${eventId}/recordings`),

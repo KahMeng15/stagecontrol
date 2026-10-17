@@ -15,6 +15,7 @@ class StreamStatusResponse(BaseModel):
     rtmp_url: str
     webrtc_url: str
     webrtc_whep_url: str
+    webrtc_whip_url: Optional[str] = None
     hls_url: str
     hls_playlist_url: str
     stream_key: Optional[str] = None

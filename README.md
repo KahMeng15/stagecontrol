@@ -125,6 +125,13 @@ Lead Superadmins can configure global domains in **Settings** (`/admin/settings`
   - RTMP Endpoint: `rtmp://<host>:1935/live`
   - Stream Key: Secret event stream key generated per event
   - WebRTC WHIP URL: `http://<host>:8889/live/<stream_key>/whip`
+- **Browser & Mobile Camera Streaming (No OBS Required)**:
+  - **In-Browser Studio**: Stream directly from any laptop webcam or USB capture card using the Video Setup tab.
+  - **Mobile Phone as Camera**: Scan the instant QR code or open `/events/[id]/broadcast` on any iPhone or Android phone to turn the phone into a live stage camera.
+  - **Hardware Selectors**: Front & back camera selection (`facingMode`), flip camera shortcut, microphone selector with real-time visual audio VU meter, and device torch/flashlight toggle.
+  - **Quality Presets**: Choose between 1080p Full HD (3.5 Mbps), 720p Balanced (1.5 Mbps), or 480p Data Saver (700 kbps).
+  - **Screen WakeLock**: Automatically prevents phone displays from dimming or locking during live broadcasts.
+  - **Instant WebRTC Ingest**: Stream directly into MediaMTX via WHIP (WebRTC HTTP Ingestion Protocol) with automatic recording and zero re-encoding latency.
 - **Dual-Engine Browser Player**:
   - **WebRTC WHEP (Ultra-Low Latency)**: ~150-250ms sub-second delivery for stage managers, lighting ops, and camera directors.
   - **HLS Fallback**: Buffered playback with adaptive sync via `hls.js` or native Safari HLS.
