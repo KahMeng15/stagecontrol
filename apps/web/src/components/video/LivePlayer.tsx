@@ -23,6 +23,7 @@ import {
   Mic,
   Search,
   ArrowDown,
+  Music,
 } from 'lucide-react';
 import { api, API_BASE, getWebSocketUrl, StreamStatus, VideoMarker, SubtitleItem } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -733,10 +734,13 @@ export function LivePlayer({
                         <Clock className="w-3 h-3 text-muted-foreground/70" />
                         <span>{localTime}</span>
                       </span>
-                      <p className={`leading-normal flex-1 break-words transition-colors ${
+                      <p className={`leading-normal flex-1 break-words transition-colors flex items-center gap-1.5 ${
                         isActive ? 'text-primary font-semibold' : 'text-foreground font-medium'
                       }`}>
-                        {sub.text}
+                        {sub.is_music && (
+                          <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                        )}
+                        <span>{sub.text}</span>
                       </p>
                       {isActive && (
                         <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold shrink-0">

@@ -26,11 +26,14 @@ import {
   Plus,
   Tag,
   FileText,
+  ScrollText,
   Search,
   Subtitles,
   Sparkles,
+  Music,
 } from 'lucide-react';
 import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
+import ScriptTracker from '@/components/script/ScriptTracker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -83,8 +86,8 @@ export function RecordingArchive({
   const [chapterTime, setChapterTime] = useState<number>(0);
   const [savingChapter, setSavingChapter] = useState(false);
 
-  // Dialogue transcript state
-  const [activeTab, setActiveTab] = useState<'chapters' | 'transcript'>('transcript');
+  // Dialogue transcript & script follow tabs
+  const [activeTab, setActiveTab] = useState<'chapters' | 'transcript' | 'script'>('transcript');
   const [recordSubtitles, setRecordSubtitles] = useState<SubtitleItem[]>([]);
   const [loadingSubtitles, setLoadingSubtitles] = useState(false);
   const [transcriptSearch, setTranscriptSearch] = useState('');
@@ -714,19 +717,23 @@ export function RecordingArchive({
       {/* Chapters & Dialogue Transcript Section */}
       {selectedRecording && (
         <Card className="p-5 shadow-sm">
-          <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'chapters' | 'transcript')}>
+          <Tabs value={activeTab} onValueChange={(val) => setActiveTab(val as 'chapters' | 'transcript' | 'script')}>
             <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
               <TabsList>
-                <TabsTrigger value="chapters" className="gap-1.5 text-xs">
-                  <Bookmark className="w-3.5 h-3.5" />
-                  <span>Chapters ({markers.length})</span>
-                </TabsTrigger>
                 <TabsTrigger value="transcript" className="gap-1.5 text-xs">
                   <FileText className="w-3.5 h-3.5" />
                   <span>Dialogue Transcript ({recordSubtitles.length})</span>
                   {recordSubtitles.length > 0 && (
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   )}
+                </TabsTrigger>
+                <TabsTrigger value="script" className="gap-1.5 text-xs">
+                  <ScrollText className="w-3.5 h-3.5" />
+                  <span>Imported Script</span>
+                </TabsTrigger>
+                <TabsTrigger value="chapters" className="gap-1.5 text-xs">
+                  <Bookmark className="w-3.5 h-3.5" />
+                  <span>Chapters ({markers.length})</span>
                 </TabsTrigger>
               </TabsList>
 
@@ -740,7 +747,7 @@ export function RecordingArchive({
                     <Plus className="w-3.5 h-3.5" />
                     <span>Add Chapter</span>
                   </Button>
-                ) : (
+                ) : activeTab === 'transcript' ? (
                   <div className="relative">
                     <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
                     <Input
@@ -751,7 +758,7 @@ export function RecordingArchive({
                       className="pl-8 h-8 text-xs w-48 focus:w-60 transition-all"
                     />
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
 
@@ -885,58 +892,73 @@ export function RecordingArchive({
                       const subEnd = sub.end_seconds ?? (nextSub?.start_seconds ?? subStart + 3.0);
                       const isCurrent = currentTime >= subStart && currentTime < subEnd;
 
+                      const localTime = sub.created_at
+                        ? new Date(sub.created_at).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })
+                        : (selectedRecording?.created_at
+                            ? new Date(new Date(selectedRecording.created_at).getTime() + (sub.start_seconds || 0) * 1000).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                              })
+                            : '--:--:--');
+
                       return (
                         <div
                           key={sub.id || idx}
                           onClick={() => handleJumpToSubtitle(sub.start_seconds)}
-                          className={`group px-3.5 py-2.5 transition-colors flex items-center justify-between gap-3 cursor-pointer ${
+                          className={`group px-3 py-1.5 transition-colors flex items-center justify-between gap-3 text-xs cursor-pointer ${
                             isCurrent
-                              ? 'bg-primary/10 border-l-4 border-l-primary'
+                              ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
                               : 'border-l-4 border-l-transparent hover:bg-muted/40'
                           }`}
                         >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <div className="w-6 h-6 rounded-md bg-muted border border-border/60 group-hover:border-primary/40 flex items-center justify-center shrink-0 transition-colors">
-                              {isCurrent ? (
-                                <Play className="w-3 h-3 text-primary fill-primary" />
-                              ) : (
-                                <span className="text-[10px] font-mono font-semibold text-muted-foreground group-hover:text-foreground">
-                                  {String(idx + 1).padStart(2, '0')}
-                                </span>
+                          <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                            <span
+                              className={`shrink-0 flex items-center gap-1 font-mono text-[11px] select-none ${
+                                isCurrent ? 'text-primary font-semibold' : 'text-muted-foreground group-hover:text-foreground'
+                              }`}
+                              title={`Video offset: ${formatTime(sub.start_seconds || 0)}`}
+                            >
+                              <Clock className="w-3 h-3 text-muted-foreground/70" />
+                              <span>{localTime}</span>
+                            </span>
+                            <p
+                              className={`leading-normal flex-1 break-words transition-colors flex items-center gap-1.5 ${
+                                isCurrent ? 'text-primary font-semibold' : 'text-foreground font-medium group-hover:text-primary'
+                              }`}
+                            >
+                              {sub.is_music && (
+                                <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
                               )}
-                            </div>
-
-                            <div className="min-w-0 flex-1">
-                              <div className="flex items-center gap-2">
-                                <span className="text-xs font-medium text-foreground group-hover:text-primary transition-colors leading-relaxed">
-                                  {sub.text}
-                                </span>
-                                {isCurrent && (
-                                  <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono">
-                                    PLAYING
-                                  </Badge>
-                                )}
-                              </div>
-                            </div>
+                              <span>{sub.text}</span>
+                            </p>
+                            {isCurrent && (
+                              <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold shrink-0">
+                                PLAYING
+                              </Badge>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0">
-                            <Badge variant="outline" className="text-[9px] uppercase font-mono px-1 py-0 text-muted-foreground">
+                            <Badge variant="outline" className="text-[9px] uppercase font-mono px-1.5 py-0 text-muted-foreground shrink-0">
                               {sub.language || 'en'}
                             </Badge>
                             <Button
                               type="button"
-                              size="sm"
-                              variant={isCurrent ? "default" : "secondary"}
+                              size="icon"
+                              variant={isCurrent ? "default" : "ghost"}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleJumpToSubtitle(sub.start_seconds);
                               }}
-                              className="h-7 px-2.5 text-[11px] font-mono font-bold gap-1.5"
+                              className="h-6 w-6 text-muted-foreground hover:text-foreground shrink-0"
                               title="Jump video playback to this line"
                             >
                               <Play className="w-2.5 h-2.5 fill-current" />
-                              <span>{formatTime(sub.start_seconds || 0)}</span>
                             </Button>
                           </div>
                         </div>
@@ -944,6 +966,17 @@ export function RecordingArchive({
                     })}
                 </div>
               )}
+            </TabsContent>
+
+            <TabsContent value="script" className="mt-0">
+              <ScriptTracker
+                eventId={eventId}
+                isSMOrAdmin={isSMOrAdmin}
+                playbackTime={currentTime}
+                playbackSubtitles={recordSubtitles}
+                onSeek={(seconds) => handleJumpToSubtitle(seconds)}
+                className="border-0 shadow-none bg-transparent rounded-none"
+              />
             </TabsContent>
           </Tabs>
         </Card>
@@ -993,97 +1026,25 @@ export function RecordingArchive({
             </p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card">
             {recordings.map((rec) => {
               const isSelected = selectedRecording?.id === rec.id;
               const isEditing = editingId === rec.id;
 
               return (
-                <Card
+                <div
                   key={rec.id}
                   className={cn(
-                    "p-4 transition-all flex flex-col justify-between",
+                    "group px-3.5 py-2 transition-colors flex flex-wrap sm:flex-nowrap items-center justify-between gap-3 text-xs",
                     isSelected
-                      ? "border-primary bg-primary/5 shadow-md shadow-primary/10"
-                      : "hover:border-border hover:bg-muted/20"
+                      ? "bg-primary/10 border-l-4 border-l-primary shadow-sm"
+                      : "border-l-4 border-l-transparent hover:bg-muted/30"
                   )}
                 >
-                  <div>
-                    {/* Card Header */}
-                    <div className="flex items-start justify-between gap-2 mb-2">
-                      {isEditing ? (
-                        <div className="flex items-center gap-1.5 flex-1">
-                          <Input
-                            type="text"
-                            value={editTitle}
-                            onChange={(e) => setEditTitle(e.target.value)}
-                            className="h-7 text-xs flex-1"
-                            autoFocus
-                          />
-                          <Button
-                            size="icon"
-                            variant="default"
-                            onClick={() => handleSaveRename(rec.id)}
-                            disabled={savingEdit}
-                            className="h-7 w-7"
-                            title="Save title"
-                          >
-                            <Check className="w-3.5 h-3.5" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            onClick={() => setEditingId(null)}
-                            className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                            title="Cancel"
-                          >
-                            <X className="w-3.5 h-3.5" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 flex-1 min-w-0">
-                          <h4 className="text-xs font-bold text-foreground truncate">
-                            {formatFriendlyRecordingTitle(rec.title)}
-                          </h4>
-                          {isSMOrAdmin && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              onClick={() => handleStartRename(rec)}
-                              className="h-6 w-6 text-muted-foreground hover:text-foreground"
-                              title="Rename recording"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </Button>
-                          )}
-                        </div>
-                      )}
-
-                      <Badge
-                        variant={rec.status === 'ready' ? 'secondary' : 'outline'}
-                        className="text-[10px] font-mono uppercase"
-                      >
-                        {rec.status.toUpperCase()}
-                      </Badge>
-                    </div>
-
-                    {/* Metadata chips */}
-                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground mb-4">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3 h-3 text-muted-foreground/70" />
-                        <span>{formatFriendlyDate(rec.created_at)}</span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <HardDrive className="w-3 h-3 text-muted-foreground/70" />
-                        <span>{formatFileSize(rec.file_size_bytes)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions Bar */}
-                  <div className="flex items-center justify-between pt-3 border-t border-border/60">
+                  {/* Left: Quick Play button + Title / Rename */}
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
                     <Button
-                      size="sm"
+                      size="icon"
                       variant={isSelected ? "default" : "secondary"}
                       onClick={() => {
                         if (isSelected) {
@@ -1093,38 +1054,149 @@ export function RecordingArchive({
                           setAutoPlayNext(true);
                         }
                       }}
-                      className="gap-1.5 text-xs font-semibold h-8"
+                      className="h-7 w-7 shrink-0"
+                      title={isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take'}
                     >
-                      {isSelected && isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                      <span>{isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take'}</span>
+                      {isSelected && isPlaying ? (
+                        <Pause className="w-3 h-3" />
+                      ) : (
+                        <Play className="w-3 h-3 fill-current" />
+                      )}
                     </Button>
 
-                    <div className="flex items-center gap-1.5">
+                    {isEditing ? (
+                      <div className="flex items-center gap-1.5 flex-1 max-w-sm">
+                        <Input
+                          type="text"
+                          value={editTitle}
+                          onChange={(e) => setEditTitle(e.target.value)}
+                          className="h-7 text-xs flex-1"
+                          autoFocus
+                        />
+                        <Button
+                          size="icon"
+                          variant="default"
+                          onClick={() => handleSaveRename(rec.id)}
+                          disabled={savingEdit}
+                          className="h-7 w-7 shrink-0"
+                          title="Save title"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => setEditingId(null)}
+                          className="h-7 w-7 text-muted-foreground hover:text-foreground shrink-0"
+                          title="Cancel"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isSelected) {
+                              togglePlay();
+                            } else {
+                              setSelectedRecording(rec);
+                              setAutoPlayNext(true);
+                            }
+                          }}
+                          className={`font-semibold truncate hover:text-primary transition-colors text-left ${
+                            isSelected ? 'text-primary' : 'text-foreground'
+                          }`}
+                          title={rec.title}
+                        >
+                          {formatFriendlyRecordingTitle(rec.title)}
+                        </button>
+
+                        {isSelected && (
+                          <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold shrink-0">
+                            {isPlaying ? 'PLAYING' : 'SELECTED'}
+                          </Badge>
+                        )}
+
+                        {isSMOrAdmin && (
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            onClick={() => handleStartRename(rec)}
+                            className="h-6 w-6 opacity-40 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground shrink-0"
+                            title="Rename recording"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: Metadata + Action buttons */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-2.5 text-[11px] text-muted-foreground font-mono">
+                      <div className="flex items-center gap-1" title="Recording Date">
+                        <Calendar className="w-3 h-3 text-muted-foreground/70" />
+                        <span>{formatFriendlyDate(rec.created_at)}</span>
+                      </div>
+                      <span className="text-border hidden sm:inline">•</span>
+                      <div className="flex items-center gap-1 hidden sm:flex" title="File Size">
+                        <HardDrive className="w-3 h-3 text-muted-foreground/70" />
+                        <span>{formatFileSize(rec.file_size_bytes)}</span>
+                      </div>
+                      <Badge
+                        variant={rec.status === 'ready' ? 'secondary' : 'outline'}
+                        className="text-[9px] font-mono uppercase px-1.5 py-0 h-4 shrink-0"
+                      >
+                        {rec.status.toUpperCase()}
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center gap-1 shrink-0">
+                      <Button
+                        size="sm"
+                        variant={isSelected ? "default" : "secondary"}
+                        onClick={() => {
+                          if (isSelected) {
+                            togglePlay();
+                          } else {
+                            setSelectedRecording(rec);
+                            setAutoPlayNext(true);
+                          }
+                        }}
+                        className="h-7 px-2.5 text-xs font-semibold gap-1.5"
+                      >
+                        {isSelected && isPlaying ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3 fill-current" />}
+                        <span>{isSelected ? (isPlaying ? 'Pause' : 'Resume') : 'Play'}</span>
+                      </Button>
+
                       <Button
                         asChild
                         variant="ghost"
                         size="icon"
-                        className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                        className="h-7 w-7 text-muted-foreground hover:text-foreground"
                         title="Download MP4"
                       >
                         <a
                           href={getAuthenticatedUrl(rec.download_url)}
                           download
                         >
-                          <Download className="w-4 h-4" />
+                          <Download className="w-3.5 h-3.5" />
                         </a>
                       </Button>
 
                       {isAdmin && (
                         <>
                           {deletingId === rec.id ? (
-                            <div className="flex items-center gap-1 bg-destructive/10 p-1 rounded-lg border border-destructive/30">
-                              <span className="text-[10px] text-destructive font-semibold px-1">Delete?</span>
+                            <div className="flex items-center gap-1 bg-destructive/10 px-1.5 py-0.5 rounded-md border border-destructive/30">
+                              <span className="text-[10px] text-destructive font-semibold">Delete?</span>
                               <Button
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => handleDelete(rec.id)}
-                                className="h-6 px-2 text-[10px] font-bold"
+                                className="h-5 px-1.5 text-[10px] font-bold"
                               >
                                 Yes
                               </Button>
@@ -1132,7 +1204,7 @@ export function RecordingArchive({
                                 size="sm"
                                 variant="ghost"
                                 onClick={() => setDeletingId(null)}
-                                className="h-6 px-2 text-[10px]"
+                                className="h-5 px-1.5 text-[10px]"
                               >
                                 No
                               </Button>
@@ -1142,17 +1214,17 @@ export function RecordingArchive({
                               variant="ghost"
                               size="icon"
                               onClick={() => setDeletingId(rec.id)}
-                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              className="h-7 w-7 text-muted-foreground hover:text-destructive"
                               title="Delete recording"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </Button>
                           )}
                         </>
                       )}
                     </div>
                   </div>
-                </Card>
+                </div>
               );
             })}
           </div>

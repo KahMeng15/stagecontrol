@@ -43,6 +43,81 @@ interface ScriptTrackerProps {
   isSMOrAdmin: boolean;
   className?: string;
   onBlockSelect?: (block: ScriptBlock) => void;
+  // Recording playback mode props
+  playbackTime?: number;
+  playbackSubtitles?: SubtitleItem[];
+  onSeek?: (seconds: number) => void;
+}
+
+function formatTime(seconds: number): string {
+  if (isNaN(seconds) || seconds < 0) return '00:00';
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Strict music/performance check: differentiates spoken dialogue from musical acts
+function isMusicPerformance(text?: string | null, isMusicFlag?: boolean | null): boolean {
+  if (isMusicFlag) return true;
+  if (!text) return false;
+  const trimmed = text.trim();
+  // Explicit musical tags like [Music], [Singing], [Song], [Instrumental], etc.
+  if (/^(\[|\(|\{)\s*(music|singing|song|instrumental|live music|choir|band|performance)\s*(\]|\)|\})/i.test(trimmed)) {
+    return true;
+  }
+  if (/[\u266a\u266b\u2669\u266c♪♫♩♬🎶♭♯]/.test(trimmed)) {
+    return true;
+  }
+  const lower = trimmed.toLowerCase();
+  const musicHallucinations = [
+    'thanks for watching',
+    'thank you for watching',
+    'chopin',
+    'to this dream',
+    'down your face',
+    'stuck in reverse',
+    'try to fix you',
+  ];
+  if (musicHallucinations.some((h) => lower.includes(h))) {
+    return true;
+  }
+  return false;
+}
+
+function isPerformanceBlock(blk?: ScriptBlock | null): boolean {
+  if (!blk) return false;
+  const cue = (blk.cue || '').toLowerCase();
+  const diag = (blk.dialogue || '').toLowerCase();
+  const speaker = (blk.speaker || '').toLowerCase();
+
+  const cueSpeaker = `${cue} ${speaker}`;
+  const cuePattern = /\b(audio|music|song|songs|track|tracks|soundtrack|soundtracks|playback|singing|sing|band|choir|anthem|dance|dancing|performance|dikir|silat|walk-in|video|montage|instrumental)\b/i;
+  if (cuePattern.test(cueSpeaker)) {
+    return true;
+  }
+
+  const diagPattern = /\b(dance|dancing|song|songs|singing|anthem|dikir|silat|walk-in|soundtrack)\b/i;
+  if (diag && diagPattern.test(diag)) {
+    if (speaker && diag.length > 40) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+function getPerformanceName(blk?: ScriptBlock | null): string {
+  if (!blk) return 'Musical Performance / Song Active';
+  const cue = blk.cue?.trim();
+  const diag = blk.dialogue?.trim();
+  if (cue && /\b(dance|song|music|soundtrack|audio|anthem|performance|playback|video|tribute)\b/i.test(cue)) {
+    return cue;
+  }
+  if (diag && /\b(dance|song|singing|performance|walk-in|video|tribute)\b/i.test(diag)) {
+    return diag;
+  }
+  return cue || diag || 'Live Song / Performance Active';
 }
 
 // Client-side fuzzy text normalization
@@ -255,7 +330,11 @@ export default function ScriptTracker({
   isSMOrAdmin,
   className = '',
   onBlockSelect,
+  playbackTime,
+  playbackSubtitles,
+  onSeek,
 }: ScriptTrackerProps) {
+  const isPlaybackMode = playbackTime !== undefined;
   const [script, setScript] = useState<ScriptItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [activeBlockId, setActiveBlockId] = useState<string | null>(null);
@@ -270,6 +349,7 @@ export default function ScriptTracker({
   const [selectedSectionId, setSelectedSectionId] = useState<string>('all');
   const [teleprompterMode, setTeleprompterMode] = useState(false);
   const [isMusicActive, setIsMusicActive] = useState(false);
+  const [activePerformanceName, setActivePerformanceName] = useState<string | null>(null);
   const musicTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Import Modal
@@ -338,8 +418,138 @@ export default function ScriptTracker({
   // Track timestamp of last matched block to implement anti-jump cooldown
   const lastMatchTimeRef = useRef<number>(Date.now());
 
-  // WebSocket Listener for real-time speech matching and sync (stays connected permanently)
+  // Map subtitle timestamps to script blocks in recording mode
+  const blockTimestamps = useMemo(() => {
+    if (!isPlaybackMode || !playbackSubtitles?.length || !allBlocks.length) {
+      return new Map<string, number>();
+    }
+    const map = new Map<string, number>();
+    for (const sub of playbackSubtitles) {
+      if (sub.start_seconds === null || sub.start_seconds === undefined) continue;
+      const spoken = sub.text;
+      if (!spoken || spoken.split(' ').length < 2) continue;
+      let bestId: string | null = null;
+      let bestScore = 0;
+      for (const blk of allBlocks) {
+        if (!blk.dialogue) continue;
+        const score = computeSimilarity(spoken, blk.dialogue);
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = blk.id;
+        }
+      }
+      if (bestId && bestScore >= (wildcardThreshold / 100)) {
+        if (!map.has(bestId)) {
+          map.set(bestId, sub.start_seconds);
+        }
+      }
+    }
+    return map;
+  }, [isPlaybackMode, playbackSubtitles, allBlocks, wildcardThreshold]);
+
+  // Sync script position with video playbackTime in recording mode
   useEffect(() => {
+    if (!isPlaybackMode || playbackTime === undefined || !playbackSubtitles?.length || !allBlocks.length) {
+      return;
+    }
+    if (!speechSyncEnabled) return;
+
+    // Find current or latest subtitle up to playbackTime
+    const currentSub = playbackSubtitles.find(
+      (s) =>
+        s.start_seconds !== null &&
+        s.start_seconds !== undefined &&
+        playbackTime >= s.start_seconds &&
+        playbackTime < (s.end_seconds ?? s.start_seconds + 3.0)
+    ) || [...playbackSubtitles].reverse().find(
+      (s) => s.start_seconds !== null && s.start_seconds !== undefined && s.start_seconds <= playbackTime
+    );
+
+    if (!currentSub || !currentSub.text) return;
+
+    const spoken = currentSub.text;
+    const isMusic = isMusicPerformance(spoken, currentSub.is_music);
+
+    const currBlockId = activeBlockIdRef.current;
+    const currIdx = allBlocks.findIndex((b) => b.id === currBlockId);
+
+    if (isMusic) {
+      setIsMusicActive(true);
+      // Find current or upcoming performance block
+      let targetPerfBlock: ScriptBlock | null = null;
+      if (currIdx >= 0) {
+        for (let i = currIdx; i <= Math.min(allBlocks.length - 1, currIdx + 8); i++) {
+          if (isPerformanceBlock(allBlocks[i])) {
+            targetPerfBlock = allBlocks[i];
+            break;
+          }
+        }
+      }
+      if (!targetPerfBlock) {
+        const words = spoken.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+        targetPerfBlock = allBlocks.find((b) => {
+          if (!isPerformanceBlock(b)) return false;
+          const comb = `${b.cue || ''} ${b.dialogue || ''}`.toLowerCase();
+          return words.some((w: string) => comb.includes(w));
+        }) || null;
+      }
+      if (targetPerfBlock) {
+        setActiveBlockId(targetPerfBlock.id);
+        setActivePerformanceName(getPerformanceName(targetPerfBlock));
+      }
+      return;
+    } else {
+      setIsMusicActive(false);
+    }
+
+    let bestId: string | null = null;
+    let bestScore = 0;
+
+    // Nearby proximity search first
+    if (currIdx >= 0) {
+      const start = Math.max(0, currIdx - 2);
+      const end = Math.min(allBlocks.length - 1, currIdx + 6);
+      for (let i = start; i <= end; i++) {
+        const blk = allBlocks[i];
+        if (!blk.dialogue) continue;
+        const score = computeSimilarity(spoken, blk.dialogue) + 0.08;
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = blk.id;
+        }
+      }
+    }
+
+    // Global fallback
+    if (bestScore < (wildcardThreshold / 100)) {
+      for (const blk of allBlocks) {
+        if (!blk.dialogue) continue;
+        const score = computeSimilarity(spoken, blk.dialogue);
+        if (score > bestScore) {
+          bestScore = score;
+          bestId = blk.id;
+        }
+      }
+    }
+
+    if (bestId && bestScore >= (wildcardThreshold / 100)) {
+      if (bestId !== activeBlockIdRef.current) {
+        setActiveBlockId(bestId);
+        lastMatchTimeRef.current = Date.now();
+        setLastConfidence(Math.round(bestScore * 100));
+        setLastMatchedSpoken(spoken);
+
+        const targetBlock = allBlocks.find((b) => b.id === bestId);
+        if (targetBlock && selectedSectionId !== 'all' && selectedSectionId !== targetBlock.section_id) {
+          setSelectedSectionId('all');
+        }
+      }
+    }
+  }, [isPlaybackMode, playbackTime, playbackSubtitles, allBlocks, wildcardThreshold, speechSyncEnabled, selectedSectionId]);
+
+  // WebSocket Listener for real-time speech matching and sync (stays connected permanently during live)
+  useEffect(() => {
+    if (isPlaybackMode) return;
     let ws: WebSocket | null = null;
     let reconnectTimer: NodeJS.Timeout | null = null;
     let isDisposed = false;
@@ -377,17 +587,45 @@ export default function ScriptTracker({
               setActiveBlockId(null);
             } else if (data.type === 'subtitle') {
               const spoken = data.text || '';
-              const isMusic = Boolean(data.is_music) ||
-                /[\u266a\u266b\u2669\u266c]/.test(spoken) ||
-                /\[(music|singing|song|instrumental|performance)\]/i.test(spoken) ||
-                /\((music|singing|song|instrumental|performance)\)/i.test(spoken);
+              const isMusic = isMusicPerformance(spoken, data.is_music);
 
               if (isMusic) {
                 setIsMusicActive(true);
+                const currentBlocks = allBlocksRef.current;
+                const currBlockId = activeBlockIdRef.current;
+                const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
+
+                let targetPerfBlock: ScriptBlock | null = null;
+                if (currIdx >= 0) {
+                  for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + 8); i++) {
+                    if (isPerformanceBlock(currentBlocks[i])) {
+                      targetPerfBlock = currentBlocks[i];
+                      break;
+                    }
+                  }
+                }
+                if (!targetPerfBlock) {
+                  const words = spoken.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
+                  targetPerfBlock = currentBlocks.find((b) => {
+                    if (!isPerformanceBlock(b)) return false;
+                    const comb = `${b.cue || ''} ${b.dialogue || ''}`.toLowerCase();
+                    return words.some((w: string) => comb.includes(w));
+                  }) || null;
+                }
+
+                if (targetPerfBlock) {
+                  if (targetPerfBlock.id !== currBlockId) {
+                    setActiveBlockId(targetPerfBlock.id);
+                    lastMatchTimeRef.current = Date.now();
+                  }
+                  setActivePerformanceName(getPerformanceName(targetPerfBlock));
+                }
+
                 if (musicTimerRef.current) clearTimeout(musicTimerRef.current);
                 musicTimerRef.current = setTimeout(() => {
                   setIsMusicActive(false);
-                }, 4500);
+                }, 15000);
+                return;
               }
 
               // Real-time client-side fuzzy match with anti-jump cooldown & music protection:
@@ -397,25 +635,6 @@ export default function ScriptTracker({
               if (isSyncOn && currentBlocks.length > 0 && spoken) {
                 const currBlockId = activeBlockIdRef.current;
                 const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
-
-                // Music Guard: While singing or music is playing, do NOT jump around dialogue lines!
-                if (isMusic) {
-                  if (currIdx >= 0) {
-                    for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + 2); i++) {
-                      const blk = currentBlocks[i];
-                      const combined = `${blk.cue || ''} ${blk.dialogue || ''}`.toLowerCase();
-                      if (combined.includes('song') || combined.includes('music') || combined.includes('singing') || combined.includes('performance') || combined.includes('audio')) {
-                        if (blk.id !== currBlockId) {
-                          setActiveBlockId(blk.id);
-                          lastMatchTimeRef.current = Date.now();
-                        }
-                        break;
-                      }
-                    }
-                  }
-                  // Hold position during music; never execute global jumps!
-                  return;
-                }
 
                 if (spoken.split(' ').length < 2) return;
 
@@ -433,9 +652,10 @@ export default function ScriptTracker({
 
                   for (let i = startIdx; i <= endIdx; i++) {
                     const blk = currentBlocks[i];
-                    if (!blk.dialogue) continue;
+                    const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
+                    if (!targetText) continue;
 
-                    let score = computeSimilarity(spoken, blk.dialogue);
+                    let score = computeSimilarity(spoken, targetText);
                     const diff = blk.order_index - currIdx;
                     if (diff >= 0 && diff <= 2) score += 0.06;
                     else if (diff >= 3 && diff <= 5) score += 0.03;
@@ -472,9 +692,10 @@ export default function ScriptTracker({
 
                 for (let i = 0; i < currentBlocks.length; i++) {
                   const blk = currentBlocks[i];
-                  if (!blk.dialogue) continue;
+                  const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
+                  if (!targetText) continue;
 
-                  const score = computeSimilarity(spoken, blk.dialogue);
+                  const score = computeSimilarity(spoken, targetText);
                   if (score > bestGlobalScore) {
                     bestGlobalScore = score;
                     bestGlobalMatch = blk;
@@ -538,7 +759,7 @@ export default function ScriptTracker({
         }
       }
     };
-  }, [eventId, fetchScript]);
+  }, [eventId, fetchScript, isPlaybackMode]);
 
   // Smooth auto-scroll directly inside the script container
   useEffect(() => {
@@ -562,7 +783,25 @@ export default function ScriptTracker({
     setActiveBlockId(block.id);
     lastMatchTimeRef.current = Date.now();
     onBlockSelect?.(block);
-    if (isSMOrAdmin) {
+
+    if (isPlaybackMode && onSeek) {
+      let targetTime = blockTimestamps.get(block.id);
+      if (targetTime === undefined) {
+        const blockIdx = allBlocks.findIndex((b) => b.id === block.id);
+        if (blockIdx >= 0) {
+          for (let i = blockIdx - 1; i >= 0; i--) {
+            const prevTime = blockTimestamps.get(allBlocks[i].id);
+            if (prevTime !== undefined) {
+              targetTime = prevTime;
+              break;
+            }
+          }
+        }
+      }
+      if (targetTime !== undefined) {
+        onSeek(targetTime);
+      }
+    } else if (isSMOrAdmin) {
       try {
         await api.jumpScriptBlock(eventId, block.id);
       } catch (err) {
@@ -720,7 +959,7 @@ export default function ScriptTracker({
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-bold text-foreground">
-                {script ? script.title : 'Live Script & Cue Tracker'}
+                {script ? script.title : (isPlaybackMode ? 'Imported Script' : 'Live Script & Cue Tracker')}
               </h3>
               {script && (
                 <Badge variant="secondary" className="font-mono text-[10px]">
@@ -729,7 +968,7 @@ export default function ScriptTracker({
               )}
             </div>
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <span>Speech-to-Script Wildcard Sync (~{wildcardThreshold}% tolerance)</span>
+              <span>{isPlaybackMode ? 'Take Replay Video Sync' : `Speech-to-Script Wildcard Sync (~${wildcardThreshold}% tolerance)`}</span>
               {lastConfidence && (
                 <span className="text-emerald-400 font-mono font-medium">
                   • {Math.round(lastConfidence * 100)}% match
@@ -759,10 +998,14 @@ export default function ScriptTracker({
             variant={speechSyncEnabled ? 'default' : 'outline'}
             onClick={() => setSpeechSyncEnabled(!speechSyncEnabled)}
             className="gap-1.5 text-xs h-8"
-            title="Toggle Live Speech-to-Script Auto-Sync"
+            title={isPlaybackMode ? 'Toggle Video-to-Script Auto-Sync' : 'Toggle Live Speech-to-Script Auto-Sync'}
           >
             <Sparkles className={`w-3.5 h-3.5 ${speechSyncEnabled ? 'animate-pulse text-emerald-400' : ''}`} />
-            <span className="hidden sm:inline">{speechSyncEnabled ? 'AI Sync Active' : 'AI Sync Off'}</span>
+            <span className="hidden sm:inline">
+              {isPlaybackMode
+                ? (speechSyncEnabled ? 'Video Sync On' : 'Video Sync Off')
+                : (speechSyncEnabled ? 'AI Sync Active' : 'AI Sync Off')}
+            </span>
           </Button>
 
           {/* Teleprompter Fullscreen Mode */}
@@ -866,21 +1109,33 @@ export default function ScriptTracker({
       )}
 
       {/* Live Music / Performance Active Indicator Banner (Orange) */}
-      {isMusicActive && (
-        <div className="px-4 py-2 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-3 overflow-x-auto text-xs animate-in fade-in duration-150">
-          <div className="flex items-center gap-1.5 text-orange-400 font-semibold uppercase tracking-wider shrink-0">
-            <Music className="w-3.5 h-3.5 text-orange-400" />
-            <span className="font-bold">Performance Active:</span>
-          </div>
+      {(() => {
+        const isCurrentBlockPerformance = isPerformanceBlock(activeBlock);
+        const isPerformanceActive = isCurrentBlockPerformance || isMusicActive;
+        const performanceTitle = isCurrentBlockPerformance
+          ? getPerformanceName(activeBlock)
+          : (activePerformanceName || 'Live Song / Performance Active');
 
-          <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
-            <div className="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-2 shrink-0 bg-orange-500/15 border-orange-500/40 text-orange-300 shadow-sm">
-              <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-              <span className="font-mono font-medium whitespace-nowrap">Dialogue sync anchored</span>
+        if (!isPerformanceActive) return null;
+
+        return (
+          <div className="px-4 py-2 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-3 overflow-x-auto text-xs animate-in fade-in duration-150">
+            <div className="flex items-center gap-1.5 text-orange-400 font-semibold uppercase tracking-wider shrink-0">
+              <Music className="w-3.5 h-3.5 text-orange-400" />
+              <span className="font-bold">Performance Active:</span>
+            </div>
+
+            <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
+              <div className="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-2 shrink-0 bg-orange-500/15 border-orange-500/40 text-orange-300 shadow-sm">
+                <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
+                <span className="font-mono font-medium whitespace-nowrap">
+                  {performanceTitle}
+                </span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Active Cues Alert Banner for Technical Crew (Green) */}
       {activeCues.length > 0 && (
@@ -1030,6 +1285,29 @@ export default function ScriptTracker({
                     </span>
                   ) : (
                     <span className="text-xs text-muted-foreground/60 italic select-none">—</span>
+                  )}
+
+                  {isPlaybackMode && blockTimestamps.has(block.id) && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={isActive ? "default" : "secondary"}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onSeek?.(blockTimestamps.get(block.id)!);
+                      }}
+                      className="h-5 px-1.5 text-[9px] font-mono gap-1 shrink-0"
+                      title="Jump video playback to this line"
+                    >
+                      <Play className="w-2 h-2 fill-current" />
+                      <span>{formatTime(blockTimestamps.get(block.id)!)}</span>
+                    </Button>
+                  )}
+
+                  {isActive && isPlaybackMode && (
+                    <Badge variant="default" className="text-[9px] px-1 py-0 h-4 font-mono font-bold shrink-0">
+                      PLAYING
+                    </Badge>
                   )}
                 </div>
 

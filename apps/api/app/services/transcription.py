@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 import uuid
 from datetime import datetime, timezone
@@ -18,52 +19,58 @@ logger = logging.getLogger("stagecontrol.transcription")
 
 
 def is_music_text(text: str) -> bool:
-    """Detects whether text contains musical notation or singing/performance tags."""
+    """Detects whether text contains musical notation, singing/music tags, or known music hallucination phrases."""
     if not text:
         return False
-    if any(ch in text for ch in ["♪", "♫", "♩", "♬", "🎶", "♭", "♯"]):
-        return True
-    lower = text.lower().strip()
+    stripped = text.strip()
+    lower = stripped.lower()
     music_keywords = [
         "[music]", "(music)", "{music}",
         "[singing]", "(singing)", "{singing}",
         "[song]", "(song)", "{song}",
         "[instrumental]", "(instrumental)", "{instrumental}",
-        "[performance]", "(performance)", "{performance}",
-        "[applause]", "(applause)", "{applause}",
-        "[cheering]", "(cheering)", "{cheering}"
+        "thanks for watching", "thank you for watching",
+        "to this dream", "down your face",
+        "try to fix you", "stuck in reverse",
+        "chopin",
     ]
-    return any(kw in lower for kw in music_keywords)
+    if any(kw in lower for kw in music_keywords):
+        return True
+
+    if any(ch in stripped for ch in ["♪", "♫", "♩", "♬", "🎶"]):
+        return True
+
+    return False
 
 
 def detect_music_acoustics(audio: np.ndarray, sample_rate: int = 16000) -> bool:
     """
-    Evaluates acoustic spectral flatness to detect sustained harmonic music,
-    singing, or backing track audio versus bursty speech.
-    Harmonic music/singing has very low spectral flatness (< 0.025) across windows.
+    Evaluates acoustic energy consistency to detect sustained performance audio,
+    backing tracks, songs, or dance tracks versus bursty spoken speech.
+    Sustained musical audio has steady RMS energy (coefficient of variation < 0.25) and RMS > 0.015,
+    whereas spoken dialogue has frequent pauses and high syllable variance (CV > 0.35).
     """
-    if len(audio) < sample_rate * 0.4:
+    if len(audio) < sample_rate * 1.0:
         return False
 
-    frame_len = int(sample_rate * 0.4)
-    hop_len = int(sample_rate * 0.2)
-    flatness_scores = []
+    frame_len = int(sample_rate * 0.25)  # 250ms windows
+    energies = []
+    for s in range(0, len(audio) - frame_len + 1, frame_len // 2):
+        f = audio[s:s + frame_len]
+        energies.append(float(np.sqrt(np.mean(f**2))))
 
-    for start in range(0, len(audio) - frame_len + 1, hop_len):
-        frame = audio[start:start + frame_len]
-        windowed = frame * np.hanning(len(frame))
-        spectrum = np.abs(np.fft.rfft(windowed)) ** 2
-        spectrum = np.maximum(spectrum, 1e-12)
-        geo_mean = np.exp(np.mean(np.log(spectrum)))
-        ari_mean = np.mean(spectrum)
-        if ari_mean > 1e-6:
-            flatness_scores.append(geo_mean / ari_mean)
-
-    if not flatness_scores:
+    if not energies:
         return False
 
-    median_flatness = float(np.median(flatness_scores))
-    return median_flatness < 0.025
+    mean_energy = float(np.mean(energies))
+    if mean_energy < 0.015:  # Low ambient room noise / mic hiss, not loud performance music
+        return False
+
+    std_energy = float(np.std(energies))
+    coeff_var = std_energy / mean_energy
+
+    # Continuous musical backing track has low CV (< 0.25)
+    return coeff_var < 0.25
 
 
 class TranscriptionService:
@@ -184,15 +191,15 @@ class TranscriptionService:
                 return True
         return False
 
-    def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> list[dict]:
-        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk with music & singing detection."""
+    def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> tuple[list[dict], bool]:
+        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk."""
         model = self._get_model()
         results = []
-        is_acoustic_music = detect_music_acoustics(audio_data)
+        is_acoustics = detect_music_acoustics(audio_data)
 
         try:
-            # Guide multilingual speech & cues with explicit musical performance awareness
-            initial_prompt = "Stage rehearsal, dialogue, cues, and musical performances [Music] [Singing] ♪ in English and Bahasa Melayu."
+            # Clean theatre & stage rehearsal vocabulary priming without hallucinating music symbols
+            initial_prompt = "Stage rehearsal and live theatre dialogue in English and Bahasa Melayu."
             segments, info = model.transcribe(
                 audio_data,
                 task="transcribe",
@@ -211,35 +218,19 @@ class TranscriptionService:
             for seg in segments:
                 text = seg.text.strip()
                 if text and len(text) > 1 and not self._is_hallucinated_repetition(text):
-                    is_seg_music = is_music_text(text) or is_acoustic_music
-                    formatted_text = text
-                    if is_seg_music and not any(ch in formatted_text for ch in ["♪", "♫"]):
-                        if not formatted_text.startswith("["):
-                            formatted_text = f"♪ {formatted_text} ♪"
+                    is_seg_music = is_music_text(text) or (seg.no_speech_prob > 0.45)
 
                     results.append({
-                        "text": formatted_text,
+                        "text": text,
                         "raw_text": text,
                         "start": seg.start,
                         "end": seg.end,
                         "language": info.language or "en",
-                        "is_music": is_seg_music,
+                        "is_music": is_seg_music or is_acoustics,
                     })
-
-            # If Whisper produced no segments (e.g. instrumental music filtered by VAD)
-            # but acoustic analysis detects sustained harmonic music, emit a music event
-            if not results and is_acoustic_music:
-                results.append({
-                    "text": "♪ [Live Music / Performance] ♪",
-                    "raw_text": "[Music]",
-                    "start": 0.0,
-                    "end": float(len(audio_data) / 16000),
-                    "language": "en",
-                    "is_music": True
-                })
         except Exception as e:
             logger.error(f"Error during whisper inference: {e}")
-        return results
+        return results, is_acoustics
 
     async def _transcription_worker(self, event_id: str, stream_key: str):
         """
@@ -365,19 +356,26 @@ class TranscriptionService:
                     audio_np = np.frombuffer(raw_audio, dtype=np.int16).astype(np.float32) / 32768.0
 
                     # Run inference in background thread
-                    results = await asyncio.to_thread(self._transcribe_chunk_sync, audio_np)
+                    results, is_acoustics = await asyncio.to_thread(self._transcribe_chunk_sync, audio_np)
 
                     now = datetime.now(timezone.utc)
                     start_sec = round(stream_elapsed, 1)
                     end_sec = round(stream_elapsed + duration_sec, 1)
                     stream_elapsed += duration_sec
 
+                    combined_text = ""
+                    is_chunk_music = False
+
                     if results:
                         combined_text = " ".join(r["text"] for r in results).strip()
-                        is_chunk_music = any(r.get("is_music", False) for r in results) or is_music_text(combined_text)
+                        is_chunk_music = any(r.get("is_music", False) for r in results) or is_music_text(combined_text) or is_acoustics
+                    elif is_acoustics:
+                        # Purely instrumental dance performance, backing track, or music without decoded dialogue
+                        combined_text = "♪ [Live Music / Performance] ♪"
+                        is_chunk_music = True
 
-                        if combined_text:
-                            # Save to Database
+                    if combined_text:
+                        # Save to Database
                             db: Session = SessionLocal()
                             try:
                                 import re
