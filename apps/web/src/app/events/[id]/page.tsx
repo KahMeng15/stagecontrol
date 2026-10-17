@@ -9,6 +9,11 @@ import { RoleBadge } from '@/components/RoleBadge';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
 import ScriptTracker from '@/components/script/ScriptTracker';
+import { useWalkieTalkie } from '@/components/walkie/useWalkieTalkie';
+import { useAudioDucking } from '@/components/walkie/useAudioDucking';
+import { WalkieCard } from '@/components/walkie/WalkieCard';
+import { WalkieTalkieView } from '@/components/walkie/WalkieTalkieView';
+import { WalkieIncomingBanner } from '@/components/walkie/WalkieIncomingBanner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -75,7 +80,7 @@ function EventContent() {
   const [selectedDomainType, setSelectedDomainType] = useState<'primary' | 'alternative'>('primary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'control' | 'script' | 'recordings' | 'stream' | 'crew'>('control');
+  const [activeTab, setActiveTab] = useState<'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew'>('control');
 
   // Copy state
   const [copiedKey, setCopiedKey] = useState(false);
@@ -93,6 +98,26 @@ function EventContent() {
 
   // Status updating
   const [updatingStatus, setUpdatingStatus] = useState(false);
+
+  // Walkie-Talkie Push-to-Talk Comms (Milestone 4)
+  const isAdmin = event?.user_role === 'admin';
+  const isSMOrAdmin = isAdmin || event?.user_role === 'stage_manager';
+  const hasWalkieAccess = isSMOrAdmin || event?.user_role === 'crew';
+
+  const walkie = useWalkieTalkie({
+    eventId: eventId,
+    enabled: !!event && hasWalkieAccess,
+  });
+
+  const isSpeaker = walkie.isTransmitting;
+  const isListener = !isSpeaker && Boolean(walkie.incomingSpeaker);
+  const [isPlayingCall, setIsPlayingCall] = useState(false);
+
+  // Global Audio Ducking:
+  // - When current user is the speaker: mute other media audio completely to prevent feedback
+  // - When receiving from another speaker (listener) or playing back recorded call: duck other media volume by 50%
+  // - When channel returns to idle: restore all media volume & mute states back to original
+  useAudioDucking({ isSpeaker, isListener, isPlayingCall });
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -318,11 +343,18 @@ function EventContent() {
     );
   }
 
-  const isAdmin = event.user_role === 'admin';
-  const isSMOrAdmin = isAdmin || event.user_role === 'stage_manager';
-
   return (
     <div className="min-h-screen bg-background flex flex-col text-foreground">
+      {/* Global Live Walkie-Talkie Incoming Audio Banner */}
+      {hasWalkieAccess && (
+        <WalkieIncomingBanner
+          speaker={walkie.incomingSpeaker}
+          audioLevel={walkie.incomingAudioLevel}
+          isMuted={walkie.isMuted}
+          onToggleMute={() => walkie.setIsMuted(!walkie.isMuted)}
+        />
+      )}
+
       <Navbar />
 
       {/* Event Header Banner */}
@@ -410,6 +442,18 @@ function EventContent() {
               <span>Recordings & Replay</span>
             </TabsTrigger>
 
+            {hasWalkieAccess && (
+              <TabsTrigger value="walkie" className="gap-2 text-xs font-semibold py-2">
+                <Mic className="w-4 h-4 text-emerald-400" />
+                <span>Walkie-Talkie</span>
+                {walkie.calls.length > 0 && (
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono ml-1">
+                    {walkie.calls.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+            )}
+
             {isSMOrAdmin && (
               <TabsTrigger value="stream" className="gap-2 text-xs font-semibold py-2">
                 <Tv className="w-4 h-4" />
@@ -433,42 +477,49 @@ function EventContent() {
                   streamKey={event.stream_key}
                   isSMOrAdmin={isSMOrAdmin}
                   onOpenStreamSetup={() => setActiveTab('stream')}
+                  isSpeaker={isSpeaker}
+                  isListener={isListener}
+                  isPlayingCall={isPlayingCall}
                 />
               </div>
 
-              {/* Walkie-Talkie & Comms Card */}
-              <Card className="flex flex-col justify-between">
-                <CardHeader>
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <Mic className="w-4 h-4 text-emerald-400" />
+              {/* Walkie-Talkie & Comms Card (Milestone 4) */}
+              {hasWalkieAccess ? (
+                <WalkieCard
+                  voiceRoom={walkie.voiceRoom}
+                  isConnected={walkie.isConnected}
+                  isTransmitting={walkie.isTransmitting}
+                  isHandsFree={walkie.isHandsFree}
+                  audioLevel={walkie.audioLevel}
+                  incomingSpeaker={walkie.incomingSpeaker}
+                  incomingAudioLevel={walkie.incomingAudioLevel}
+                  connectedUsers={walkie.connectedUsers}
+                  channelBusyMessage={walkie.channelBusyMessage}
+                  recentCalls={walkie.calls}
+                  onStartTransmission={walkie.startTransmission}
+                  onStopTransmission={walkie.stopTransmission}
+                  onToggleTransmission={walkie.toggleTransmission}
+                  onOpenCommsTab={() => setActiveTab('walkie')}
+                  onPlaybackChange={setIsPlayingCall}
+                />
+              ) : (
+                <Card className="flex flex-col justify-between opacity-60">
+                  <CardHeader>
+                    <div className="flex items-center gap-2 mb-1">
+                      <Mic className="w-4 h-4 text-muted-foreground" />
                       <CardTitle className="text-xs font-bold uppercase tracking-wider">
                         Crew Walkie-Talkie
                       </CardTitle>
                     </div>
-                    <Badge variant="outline" className="border-emerald-500/30 text-emerald-400 bg-emerald-500/10 text-[10px]">
-                      VOICE READY
-                    </Badge>
-                  </div>
-                  <CardDescription className="text-xs">
-                    Real-time push-to-talk voice channel for stage directors, audio ops, and presenters.
-                  </CardDescription>
-                </CardHeader>
-
-                <CardContent className="flex flex-col items-center py-6 bg-muted/40 mx-4 mb-4 rounded-xl border border-border/50">
-                  <Button
-                    disabled
-                    size="lg"
-                    className="w-24 h-24 rounded-full flex flex-col items-center justify-center opacity-60 cursor-not-allowed border-2 border-primary/30"
-                  >
-                    <Mic className="w-8 h-8 mb-1" />
-                    <span className="text-[10px] font-bold tracking-wider">HOLD TO TALK</span>
-                  </Button>
-                  <span className="text-[11px] text-muted-foreground mt-4">
-                    Voice room: <strong className="text-foreground">{event.slug}-comms</strong>
-                  </span>
-                </CardContent>
-              </Card>
+                    <CardDescription className="text-xs">
+                      Voice channel restricted to stage managers and crew members.
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                    Walkie-Talkie requires Crew or Stage Manager privileges.
+                  </CardContent>
+                </Card>
+              )}
             </div>
 
             {/* Embedded Live Script & Cue Tracker */}
@@ -490,8 +541,41 @@ function EventContent() {
               eventId={event.id}
               isAdmin={isAdmin}
               isSMOrAdmin={isSMOrAdmin}
+              isSpeaker={isSpeaker}
+              isListener={isListener}
             />
           </TabsContent>
+
+          {/* Tab: Walkie-Talkie Push-to-Talk Comms (Milestone 4) */}
+          {hasWalkieAccess && (
+            <TabsContent value="walkie" className="space-y-6 mt-0">
+              <WalkieTalkieView
+                eventId={event.id}
+                voiceRoom={walkie.voiceRoom}
+                isConnected={walkie.isConnected}
+                isTransmitting={walkie.isTransmitting}
+                isHandsFree={walkie.isHandsFree}
+                audioLevel={walkie.audioLevel}
+                incomingSpeaker={walkie.incomingSpeaker}
+                incomingAudioLevel={walkie.incomingAudioLevel}
+                connectedUsers={walkie.connectedUsers}
+                channelBusyMessage={walkie.channelBusyMessage}
+                calls={walkie.calls}
+                isLoadingCalls={walkie.isLoadingCalls}
+                isMuted={walkie.isMuted}
+                volume={walkie.volume}
+                canManage={isSMOrAdmin}
+                onStartTransmission={walkie.startTransmission}
+                onStopTransmission={walkie.stopTransmission}
+                onToggleTransmission={walkie.toggleTransmission}
+                onToggleMute={() => walkie.setIsMuted(!walkie.isMuted)}
+                onVolumeChange={walkie.setVolume}
+                onDeleteCall={walkie.deleteCall}
+                onClearCalls={walkie.clearCalls}
+                onRefreshCalls={() => walkie.fetchCalls()}
+              />
+            </TabsContent>
+          )}
 
           {/* Tab 4: OBS Stream Setup */}
           {isSMOrAdmin && (

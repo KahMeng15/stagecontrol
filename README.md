@@ -10,8 +10,8 @@ A lightweight, self-hostable live event production hub for school, university, a
 |---|---|---|---|
 | **01** | **Basic Authentication & Event Access** | ✅ **Complete** | Argon2id auth, JWT sessions, event roles (`admin`, `stage_manager`, `crew`, `presenter`, `viewer`), event isolation & crew management |
 | **02** | **Live Video, Recording & AI Subtitles** | ✅ **Complete** | OBS → MediaMTX → WebRTC/HLS + seekable recording archive + chapters & marks + server-side Malaysian Whisper live transcription & subtitles (Manglish & Malay slang) |
-| **03** | **Script Import & Synchronized Following** | 🟡 *Next* | DOCX/Text parser, line-by-line stage advancement via WebSockets, presenter teleprompter mode |
-| **04** | **Walkie-Talkie Push-to-Talk Comms** | ⚪ *Planned* | WebRTC hold-to-talk voice channel with live speaker indicators and network resilience |
+| **03** | **Script Import & Synchronized Following** | ✅ **Complete** | DOCX/Text parser, line-by-line stage advancement via WebSockets, presenter teleprompter mode |
+| **04** | **Walkie-Talkie Push-to-Talk Comms** | ✅ **Complete** | Real-time push-to-talk voice broadcast (<100ms) with call recording, replay player & AI speech transcription |
 
 ---
 
@@ -135,6 +135,27 @@ Lead Superadmins can configure global domains in **Settings** (`/admin/settings`
   - Full HTTP 206 Partial Content (range request) video streaming support.
   - Seek backward/forward 10s, variable speed control (0.5x to 2x), volume control, and full-resolution MP4 downloads.
   - Rename takes and manage recordings with role-based access control.
+
+---
+
+## 🎙️ Walkie-Talkie Push-to-Talk Comms & AI Transcriptions (Milestone 4)
+
+- **Instant Real-Time Audio Broadcast (<100ms)**:
+  - 16kHz studio-grade mono PCM streaming over bi-directional WebSockets (`/api/events/{event_id}/walkie-talkie/ws`).
+  - The moment a crew member holds the PTT button or presses `[Spacebar]`, voice is transmitted to all connected crew members in real time.
+  - Multi-tab persistence: incoming audio plays seamlessly whether crew members are in the Control Room, Script follower, or Recordings tab.
+  - Floating top notification banner with dynamic audio VU equalizer meters and mute control.
+  - Authentic radio chirp & roger beep audio feedback synthesized via Web Audio API.
+- **Automated Call Archival & Audio Replay Player**:
+  - Every push-to-talk transmission is cleanly captured, encoded to standard `.wav` files, and saved to persistent storage (`storage/walkie_talkie/<event_id>/`).
+  - Interactive scrubbing replay player with elapsed/duration timestamps, volume control, and direct `.wav` download.
+- **Whisper AI Speech-to-Text Transcription**:
+  - As soon as a transmission completes, faster-whisper transcribes the call audio in the background (~0.5s).
+  - Transcriptions are automatically saved to SQLite and broadcast via WebSockets to all connected crew members.
+  - One-click copy transcript button and search filter across all recorded calls.
+- **Role-Based Access Control**:
+  - Access is strictly reserved for `Admin`, `Stage Manager`, and `Crew` roles.
+  - `Presenter` and public `Viewer` roles are prevented from eavesdropping or transmitting.
 
 ---
 

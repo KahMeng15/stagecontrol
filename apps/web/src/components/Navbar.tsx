@@ -35,7 +35,7 @@ export function Navbar() {
           </Link>
         </div>
 
-        {user && (
+        {user ? (
           <div className="flex items-center gap-3">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -79,6 +79,16 @@ export function Navbar() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <div className="px-2.5 py-1 rounded-full bg-muted/60 border border-border/60 text-[11px] text-muted-foreground font-medium flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>Guest</span>
+            </div>
+            <Button asChild size="xs" variant="outline">
+              <Link href="/login">Sign In</Link>
+            </Button>
           </div>
         )}
       </div>

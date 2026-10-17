@@ -54,12 +54,16 @@ interface RecordingArchiveProps {
   eventId: string;
   isAdmin?: boolean;
   isSMOrAdmin?: boolean;
+  isSpeaker?: boolean;
+  isListener?: boolean;
 }
 
 export function RecordingArchive({
   eventId,
   isAdmin = false,
   isSMOrAdmin = false,
+  isSpeaker = false,
+  isListener = false,
 }: RecordingArchiveProps) {
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
@@ -388,6 +392,27 @@ export function RecordingArchive({
     }
   };
 
+  // Audio ducking & muting for Walkie-Talkie comms
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isSpeaker) {
+      // SPEAKER: Mute playback completely to avoid mic feedback
+      video.muted = true;
+    } else if (isListener) {
+      // LISTENER: Duck volume down by 50%
+      if (!isMuted) {
+        video.muted = false;
+        video.volume = Math.max(0, Math.min(1, volume * 0.5));
+      }
+    } else {
+      // NORMAL: Restore original volume & muted state
+      video.muted = isMuted;
+      video.volume = volume;
+    }
+  }, [isSpeaker, isListener, isMuted, volume]);
+
   const changePlaybackRate = (rate: number) => {
     setPlaybackRate(rate);
     if (videoRef.current) {
@@ -504,6 +529,18 @@ export function RecordingArchive({
             <span className="text-xs font-bold text-foreground uppercase tracking-wider">
               {selectedRecording ? formatFriendlyRecordingTitle(selectedRecording.title) : 'Recording Playback & Replay'}
             </span>
+            {isSpeaker && (
+              <Badge variant="destructive" className="font-mono text-[10px] uppercase font-bold tracking-wider animate-pulse flex items-center gap-1 bg-red-600">
+                <VolumeX className="w-3 h-3" />
+                <span>MUTED</span>
+              </Badge>
+            )}
+            {isListener && (
+              <Badge variant="secondary" className="font-mono text-[10px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <Volume2 className="w-3 h-3 text-amber-400" />
+                <span>DUCKED 50%</span>
+              </Badge>
+            )}
           </div>
 
           <div className="flex items-center gap-3">

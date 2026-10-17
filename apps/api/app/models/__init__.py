@@ -7,6 +7,7 @@ from app.models.recording import Recording, VideoMarker
 from app.models.subtitle import Subtitle
 from app.models.script import Script, ScriptSection, ScriptBlock
 from app.models.settings import SystemSettings
+from app.models.walkie import WalkieCall
 
 __all__ = [
     "Base",
@@ -23,4 +24,5 @@ __all__ = [
     "ScriptSection",
     "ScriptBlock",
     "SystemSettings",
+    "WalkieCall",
 ]

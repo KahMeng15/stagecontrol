@@ -13,9 +13,11 @@ else:
 
 DB_DIR = STORAGE_DIR / "db"
 RECORDINGS_DIR = STORAGE_DIR / "recordings"
+WALKIE_DIR = STORAGE_DIR / "walkie_talkie"
 
 DB_DIR.mkdir(parents=True, exist_ok=True)
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+WALKIE_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DB_PATH = DB_DIR / "stageflow.db"
 

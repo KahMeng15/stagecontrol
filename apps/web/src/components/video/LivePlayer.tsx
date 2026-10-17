@@ -24,7 +24,12 @@ import {
   Search,
   ArrowDown,
   Music,
+  Volume2,
+  VolumeX,
+  Play,
+  Pause,
 } from 'lucide-react';
+import Hls from 'hls.js';
 import { api, API_BASE, getWebSocketUrl, StreamStatus, VideoMarker, SubtitleItem } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,14 +49,23 @@ interface LivePlayerProps {
   streamKey?: string | null;
   isSMOrAdmin?: boolean;
   onOpenStreamSetup?: () => void;
+  isSpeaker?: boolean;
+  isListener?: boolean;
+  isPlayingCall?: boolean;
 }
 
 export function LivePlayer({
   eventId,
   isSMOrAdmin = false,
   onOpenStreamSetup,
+  isSpeaker = false,
+  isListener = false,
+  isPlayingCall = false,
 }: LivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const hlsRef = useRef<Hls | null>(null);
   const [streamStatus, setStreamStatus] = useState<StreamStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   // Default to HLS because standard OBS encoders output H.264 High Profile with B-frames and AAC audio
@@ -60,6 +74,8 @@ export function LivePlayer({
   const [showBandwidthGuide, setShowBandwidthGuide] = useState(false);
   const [copiedRtmp, setCopiedRtmp] = useState(false);
   const [showBFrameHint, setShowBFrameHint] = useState(false);
+  // User initiated live monitoring playback (prevents auto-play buffering & saves bandwidth)
+  const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
 
   // Live moment markers state
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
@@ -283,12 +299,107 @@ export function LivePlayer({
 
   const isLive = Boolean(streamStatus?.is_live);
 
-  // Active stream iframe URL depending on mode
-  const currentStreamUrl = isLive && streamStatus
+  // HLS stream URL (direct m3u8) for native <video> element
+  const hlsManifestUrl = isLive && streamStatus?.hls_url
+    ? `${streamStatus.hls_url.replace(/\/$/, '')}/index.m3u8`
+    : null;
+
+  // Active stream iframe URL depending on mode (only loaded if user started monitoring)
+  const currentStreamUrl = isLive && streamStatus && hasStartedPlayback
     ? playerMode === 'webrtc'
       ? `${streamStatus.webrtc_url}/?controls=1&autoplay=1&muted=1`
       : `${streamStatus.hls_url}/?controls=1&autoplay=1&muted=1`
     : null;
+
+  // Native HLS playback setup with hls.js (only initializes and buffers when user has clicked to play)
+  useEffect(() => {
+    if (playerMode !== 'hls' || !isLive || !hlsManifestUrl || !videoRef.current || !hasStartedPlayback) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      return;
+    }
+
+    const video = videoRef.current;
+
+    if (Hls.isSupported()) {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+      }
+      const hls = new Hls({
+        enableWorker: true,
+        lowLatencyMode: true,
+        backBufferLength: 30,
+      });
+      hlsRef.current = hls;
+      hls.loadSource(hlsManifestUrl);
+      hls.attachMedia(video);
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        video.play().catch(() => {});
+      });
+      hls.on(Hls.Events.ERROR, (_, data) => {
+        if (data.fatal) {
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              hls.destroy();
+              break;
+          }
+        }
+      });
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = hlsManifestUrl;
+      video.play().catch(() => {});
+    }
+
+    return () => {
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+    };
+  }, [playerMode, isLive, hlsManifestUrl, reloadKey, hasStartedPlayback]);
+
+  // Audio ducking & muting for Live Player
+  const originalAudioRef = useRef<{ volume: number; muted: boolean } | null>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const shouldDuck = isListener || isPlayingCall;
+
+    if (isSpeaker) {
+      // SPEAKER: Mute completely to prevent microphone feedback
+      if (!originalAudioRef.current) {
+        originalAudioRef.current = { volume: video.volume, muted: video.muted };
+      }
+      video.muted = true;
+    } else if (shouldDuck) {
+      // LISTENER or CALL PLAYBACK: Duck volume down by 50%
+      if (!originalAudioRef.current) {
+        originalAudioRef.current = { volume: video.volume, muted: video.muted };
+      }
+      const orig = originalAudioRef.current;
+      if (!orig.muted) {
+        video.muted = false;
+        video.volume = Math.max(0, Math.min(1, orig.volume * 0.5));
+      }
+    } else {
+      // NORMAL: Restore original volume & muted state
+      if (originalAudioRef.current) {
+        video.muted = originalAudioRef.current.muted;
+        video.volume = originalAudioRef.current.volume;
+        originalAudioRef.current = null;
+      }
+    }
+  }, [isSpeaker, isListener, isPlayingCall]);
 
   const currentDirectUrl = isLive && streamStatus
     ? playerMode === 'webrtc'
@@ -451,6 +562,26 @@ export function LivePlayer({
             </Badge>
           )}
 
+          {/* Audio Ducking / Muting Indicators for Walkie-Talkie */}
+          {isSpeaker && (
+            <Badge variant="destructive" className="font-mono text-[10px] uppercase font-bold tracking-wider animate-pulse flex items-center gap-1 bg-red-600">
+              <VolumeX className="w-3 h-3" />
+              <span>MUTED</span>
+            </Badge>
+          )}
+          {isListener && (
+            <Badge variant="secondary" className="font-mono text-[10px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <Volume2 className="w-3 h-3 text-amber-400" />
+              <span>DUCKED 50%</span>
+            </Badge>
+          )}
+          {!isSpeaker && !isListener && isPlayingCall && (
+            <Badge variant="secondary" className="font-mono text-[10px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              <Volume2 className="w-3 h-3 text-amber-400" />
+              <span>DUCKED 50%</span>
+            </Badge>
+          )}
+
           {/* Direct Stream Link in New Window */}
           {currentDirectUrl && (
             <Button
@@ -462,6 +593,30 @@ export function LivePlayer({
               <a href={currentDirectUrl} target="_blank" rel="noopener noreferrer">
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
+            </Button>
+          )}
+
+          {/* Quick Play / Pause Monitor Button to Save Bandwidth */}
+          {isLive && (
+            <Button
+              type="button"
+              size="xs"
+              variant={hasStartedPlayback ? 'outline' : 'default'}
+              onClick={() => setHasStartedPlayback((prev) => !prev)}
+              className="gap-1.5 text-[11px]"
+              title={hasStartedPlayback ? 'Pause live stream feed to save bandwidth' : 'Start watching live stream feed'}
+            >
+              {hasStartedPlayback ? (
+                <>
+                  <Pause className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Pause Feed</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span className="hidden sm:inline">Watch Live</span>
+                </>
+              )}
             </Button>
           )}
 
@@ -518,16 +673,47 @@ export function LivePlayer({
 
       {/* Video Viewport Container */}
       <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden">
-        {/* Active Stream Iframe */}
-        {isLive && currentStreamUrl ? (
-          <iframe
-            key={`${playerMode}-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
-            src={currentStreamUrl}
-            title="StageControl Program Feed"
-            className="w-full h-full border-0 bg-black absolute inset-0"
-            allow="autoplay; fullscreen; picture-in-picture"
-          />
+        {/* Active Stream: Native HLS Video or WebRTC Iframe (only when user clicked to play) */}
+        {isLive && hasStartedPlayback ? (
+          playerMode === 'hls' ? (
+            <video
+              ref={videoRef}
+              key={`hls-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
+              controls
+              playsInline
+              autoPlay
+              muted
+              className="w-full h-full object-contain bg-black absolute inset-0"
+            />
+          ) : currentStreamUrl ? (
+            <iframe
+              ref={iframeRef}
+              key={`webrtc-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
+              src={currentStreamUrl}
+              title="StageControl Program Feed"
+              className="w-full h-full border-0 bg-black absolute inset-0"
+              allow="autoplay; fullscreen; picture-in-picture"
+            />
+          ) : null
         ) : null}
+
+        {/* Live Broadcast Available - Idle to Save Bandwidth Overlay */}
+        {isLive && !hasStartedPlayback && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-card/95 backdrop-blur-sm z-20">
+            <h3 className="text-sm font-bold text-foreground">Live Program Stream Ready</h3>
+            <p className="text-xs text-muted-foreground max-w-sm mt-1 mb-4 leading-relaxed">
+              Auto-play is paused to save network bandwidth.
+            </p>
+
+            <Button
+              type="button"
+              onClick={() => setHasStartedPlayback(true)}
+              className="font-semibold shadow-md text-xs h-8 px-5 rounded-full"
+            >
+              Watch Live Stream
+            </Button>
+          </div>
+        )}
 
         {/* Off Air / Waiting for OBS Overlay */}
         {!isLive && (

@@ -447,9 +447,63 @@ export const api = {
       method: 'DELETE',
     }),
 
+  // Walkie-Talkie Comms (Milestone 4)
+  getWalkieStatus: (eventId: string) =>
+    request<WalkieStatus>(`/events/${eventId}/walkie-talkie/status`),
+
+  getWalkieCalls: (eventId: string, search?: string) =>
+    request<WalkieCall[]>(`/events/${eventId}/walkie-talkie/calls${search ? `?search=${encodeURIComponent(search)}` : ''}`),
+
+  deleteWalkieCall: (eventId: string, callId: string) =>
+    request<{ message: string }>(`/events/${eventId}/walkie-talkie/calls/${callId}`, {
+      method: 'DELETE',
+    }),
+
+  clearAllWalkieCalls: (eventId: string) =>
+    request<{ message: string }>(`/events/${eventId}/walkie-talkie/calls`, {
+      method: 'DELETE',
+    }),
+
   // Token helper for media streaming & download
   getToken: getStoredToken,
 };
+
+export interface WalkieCall {
+  id: string;
+  event_id: string;
+  caller_id: string | null;
+  caller_name: string;
+  caller_role: string;
+  audio_url: string;
+  duration_seconds: number;
+  file_size_bytes: number;
+  transcription: string | null;
+  language: string;
+  status: string;
+  created_at: string;
+}
+
+export interface WalkiePresenceUser {
+  user_id: string;
+  caller_name: string;
+  caller_role: string;
+}
+
+export interface WalkieActiveSpeaker {
+  user_id: string;
+  caller_name: string;
+  caller_role: string;
+  transmission_id: string;
+  started_at: number;
+}
+
+export interface WalkieStatus {
+  event_id: string;
+  voice_room: string;
+  connected_users: WalkiePresenceUser[];
+  active_speaker: WalkieActiveSpeaker | null;
+  total_calls: number;
+}
 
 export function getWebSocketUrl(path: string): string {
   if (typeof window === 'undefined') return '';
@@ -470,6 +524,24 @@ export function getWebSocketUrl(path: string): string {
   const host = window.location.hostname;
   const port = window.location.port === '3000' ? '8000' : window.location.port;
   return `${wsProtocol}//${host}${port ? `:${port}` : ''}${cleanPath}${tokenQuery}`;
+}
+
+export function getAudioMediaUrl(urlPath: string): string {
+  if (!urlPath) return '';
+  const token = api.getToken() || '';
+  const tokenQuery = token ? `token=${encodeURIComponent(token)}` : '';
+
+  let fullUrl = urlPath;
+  if (!urlPath.startsWith('http://') && !urlPath.startsWith('https://')) {
+    const cleanPath = urlPath.startsWith('/api') ? urlPath.replace(/^\/api/, '') : urlPath;
+    fullUrl = `${API_BASE}${cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`}`;
+  }
+
+  if (tokenQuery && !fullUrl.includes('token=')) {
+    const sep = fullUrl.includes('?') ? '&' : '?';
+    fullUrl = `${fullUrl}${sep}${tokenQuery}`;
+  }
+  return fullUrl;
 }
 
 
