@@ -40,6 +40,22 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    if payload.get("is_guest"):
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        guest_sub = payload["sub"]
+        guest_name = payload.get("guest_name", "Guest Viewer")
+        return User(
+            id=guest_sub,
+            username=guest_name,
+            email=f"{guest_sub}@guest.local",
+            full_name=guest_name,
+            is_active=True,
+            is_superadmin=False,
+            created_at=now,
+            updated_at=now
+        )
+
     user_id = payload["sub"]
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
