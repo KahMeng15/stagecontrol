@@ -330,8 +330,14 @@ export function LivePlayer({
       }
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false,
         backBufferLength: 30,
+        liveSyncDurationCount: 4,         // Stay 4 segments (~8s) behind live edge for stability
+        liveMaxLatencyDurationCount: 10,  // Allow up to 20s drift before forcing a seek
+        maxBufferLength: 20,              // Keep up to 20s of video forward-buffered
+        maxMaxBufferLength: 40,
+        fragLoadingMaxRetry: 4,
+        fragLoadingRetryDelay: 1000,
       });
       hlsRef.current = hls;
       hls.loadSource(hlsManifestUrl);

@@ -39,7 +39,7 @@ hlsAllowOrigins: ['*']
 hlsAlwaysRemux: yes
 hlsVariant: fmp4
 hlsSegmentDuration: 2s
-hlsSegmentCount: 7
+hlsSegmentCount: 20
 
 # HTTP Playback Server for recorded fMP4 segments
 playback: yes

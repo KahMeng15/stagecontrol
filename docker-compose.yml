@@ -40,6 +40,8 @@ services:
     image: ghcr.io/kahmeng15/stagecontrol-mediamtx:latest
     container_name: stagecontrol-mediamtx
     restart: unless-stopped
+    environment:
+      - MTX_HLSSEGMENTCOUNT=20
     ports:
       - "1935:1935"       # RTMP (OBS stream ingest)
       - "8888:8888"       # HLS stream & playback
