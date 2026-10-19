@@ -258,20 +258,65 @@ function EventContent() {
   const getRtmpUrl = () => {
     const baseUrl = getActiveBaseUrl();
     let hostname = 'localhost';
+    let isHttps = false;
+    let isDomain = false;
     try {
       if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
-        hostname = new URL(baseUrl).hostname;
+        const u = new URL(baseUrl);
+        hostname = u.hostname;
+        isHttps = u.protocol === 'https:';
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
       } else if (baseUrl) {
         hostname = baseUrl.split(':')[0].replace(/\/.*$/, '');
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
       } else if (typeof window !== 'undefined') {
         hostname = window.location.hostname;
+        isHttps = window.location.protocol === 'https:';
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
       }
     } catch {
       if (typeof window !== 'undefined') {
         hostname = window.location.hostname;
       }
     }
+
+    if (isHttps || isDomain) {
+      return `rtmp://${hostname}:443/live`;
+    }
     return `rtmp://${hostname}:1935/live`;
+  };
+
+  const getWhipUrl = () => {
+    if (!event?.stream_key) return '';
+    const baseUrl = getActiveBaseUrl();
+    let hostname = 'localhost';
+    let isHttps = false;
+    let isDomain = false;
+    try {
+      if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+        const u = new URL(baseUrl);
+        hostname = u.hostname;
+        isHttps = u.protocol === 'https:';
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
+      } else if (baseUrl) {
+        hostname = baseUrl.split(':')[0].replace(/\/.*$/, '');
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
+      } else if (typeof window !== 'undefined') {
+        hostname = window.location.hostname;
+        isHttps = window.location.protocol === 'https:';
+        isDomain = !/^[0-9.]+$/.test(hostname) && hostname !== 'localhost';
+      }
+    } catch {
+      if (typeof window !== 'undefined') {
+        hostname = window.location.hostname;
+      }
+    }
+
+    if (isHttps || isDomain) {
+      const proto = isHttps ? 'https:' : (typeof window !== 'undefined' ? window.location.protocol : 'http:');
+      return `${proto}//${hostname}/live/${event.stream_key}/whip`;
+    }
+    return `http://${hostname}:8889/live/${event.stream_key}/whip`;
   };
 
   const handleCopyPublicLink = () => {
@@ -738,15 +783,35 @@ function EventContent() {
 
                     {/* WebRTC WHIP URL */}
                     <div className="pt-4 border-t border-border/50 space-y-1.5">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        WHIP Ingest URL (Ultra-low latency WebRTC streaming)
-                      </label>
-                      <Input
-                        type="text"
-                        readOnly
-                        value={`http://localhost:8889/live/${event.stream_key}/whip`}
-                        className="font-mono text-xs text-muted-foreground"
-                      />
+                      <div className="flex items-center justify-between">
+                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                          WHIP Ingest URL (Recommended for OBS over Port 443 / HTTPS)
+                        </label>
+                        <span className="text-[10px] text-emerald-400 font-medium">Standard HTTPS (Port 443)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input
+                          type="text"
+                          readOnly
+                          value={getWhipUrl()}
+                          className="font-mono text-xs"
+                        />
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          onClick={() => {
+                            copyToClipboard(getWhipUrl());
+                            toast.success('WHIP ingest URL copied');
+                          }}
+                          className="gap-1.5 shrink-0"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>Copy</span>
+                        </Button>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        In OBS Studio &rarr; Settings &rarr; Stream: Select service <strong>WHIP</strong>, paste this URL, and leave Bearer Token blank. It streams over standard HTTPS (Port 443).
+                      </p>
                     </div>
 
                     {/* OBS Profiles & Bandwidth Presets */}

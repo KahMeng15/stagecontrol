@@ -118,16 +118,30 @@ async def get_stream_status(
         from urllib.parse import urlparse
         parsed = urlparse(base_domain)
         effective_host = parsed.hostname or base_domain.replace("http://", "").replace("https://", "").split(":")[0].split("/")[0] or "localhost"
+        is_https = parsed.scheme == "https"
+        is_domain = not all(part.isdigit() for part in effective_host.split(".")) and effective_host != "localhost"
     except Exception:
         effective_host = request.url.hostname or "localhost"
+        is_https = False
+        is_domain = False
 
-    # Port mappings
-    rtmp_url = f"rtmp://{effective_host}:1935/live"
-    webrtc_url = f"http://{effective_host}:8889/live/{stream_key}"
-    webrtc_whep_url = f"http://{effective_host}:8889/live/{stream_key}/whep"
-    webrtc_whip_url = f"http://{effective_host}:8889/live/{stream_key}/whip"
-    hls_url = f"http://{effective_host}:8888/live/{stream_key}"
-    hls_playlist_url = f"http://{effective_host}:8888/live/{stream_key}/index.m3u8"
+    # Port mappings: When deployed behind a domain/HTTPS, route through port 443.
+    # Otherwise fallback to raw ports 1935, 8888, 8889 for local/LAN dev.
+    if is_https or is_domain:
+        proto = "https" if is_https else "http"
+        rtmp_url = f"rtmp://{effective_host}:443/live"
+        webrtc_url = f"{proto}://{effective_host}/live/{stream_key}"
+        webrtc_whep_url = f"{proto}://{effective_host}/live/{stream_key}/whep"
+        webrtc_whip_url = f"{proto}://{effective_host}/live/{stream_key}/whip"
+        hls_url = f"{proto}://{effective_host}/live/{stream_key}"
+        hls_playlist_url = f"{proto}://{effective_host}/live/{stream_key}/index.m3u8"
+    else:
+        rtmp_url = f"rtmp://{effective_host}:1935/live"
+        webrtc_url = f"http://{effective_host}:8889/live/{stream_key}"
+        webrtc_whep_url = f"http://{effective_host}:8889/live/{stream_key}/whep"
+        webrtc_whip_url = f"http://{effective_host}:8889/live/{stream_key}/whip"
+        hls_url = f"http://{effective_host}:8888/live/{stream_key}"
+        hls_playlist_url = f"http://{effective_host}:8888/live/{stream_key}/index.m3u8"
 
     can_view_key = has_sufficient_role(membership.role, EventRole.STAGE_MANAGER)
 
