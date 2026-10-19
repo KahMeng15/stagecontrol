@@ -365,3 +365,32 @@ def generate_compressed_proxy(master_file: Path) -> tuple[bool, Optional[Path], 
             except OSError:
                 pass
         return False, None, 0
+
+
+if __name__ == "__main__":
+    import sys
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    print("\n🔍 Scanning recordings storage directory for all MP4 takes...")
+    from app.config import RECORDINGS_DIR
+    rec_dir = Path(RECORDINGS_DIR).resolve()
+    print(f"Recordings directory: {rec_dir}")
+    if not rec_dir.exists():
+        print(f"Directory {rec_dir} does not exist.")
+        sys.exit(0)
+
+    mp4s = sorted([p for p in rec_dir.rglob("*.mp4") if ".tmp" not in p.name and ".part" not in p.name])
+    print(f"Found {len(mp4s)} take(s):\n")
+
+    repaired_count = 0
+    for mp4 in mp4s:
+        size_mb = mp4.stat().st_size / (1024 * 1024)
+        fixed = repair_corrupted_mvhd(mp4)
+        meta = probe_video_metadata(mp4)
+        dur = meta.get("duration", 0.0)
+        status_str = "REPAIRED" if fixed else "OK"
+        print(f"  [{status_str}] {mp4.name} ({size_mb:.1f} MB, {dur:.1f}s)")
+        if fixed:
+            repaired_count += 1
+
+    print(f"\nScan complete: {repaired_count} take(s) repaired.\n")
+
