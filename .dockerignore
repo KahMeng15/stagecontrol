@@ -1,0 +1,12 @@
+**/.venv
+**/node_modules
+**/.next
+**/.pytest_cache
+**/__pycache__
+**/*.pyc
+**/*.tsbuildinfo
+storage/
+*.db
+*.sqlite3
+.git
+.github

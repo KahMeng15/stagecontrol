@@ -1,10 +1,7 @@
-version: '3.8'
 
 services:
   api:
-    build:
-      context: ./apps/api
-      dockerfile: Dockerfile
+    image: ghcr.io/kahmeng15/stagecontrol-api:latest
     container_name: stagecontrol-api
     restart: unless-stopped
     ports:
@@ -25,9 +22,7 @@ services:
       retries: 3
 
   web:
-    build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+    image: ghcr.io/kahmeng15/stagecontrol-web:latest
     container_name: stagecontrol-web
     restart: unless-stopped
     ports:
