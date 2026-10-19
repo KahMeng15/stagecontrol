@@ -2,6 +2,7 @@ import os
 import httpx
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session

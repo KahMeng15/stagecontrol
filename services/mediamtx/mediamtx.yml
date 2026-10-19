@@ -66,7 +66,7 @@ paths:
     recordSegmentDuration: 1h
 
     # Automatically generate low-bandwidth 720p @ 800kbps live rendition:
-    runOnReady: >
+    runOnAvailable: >
       ffmpeg -hide_banner -loglevel warning
       -i rtmp://localhost:1935/live/$key
       -vf "scale=1280:720"
@@ -75,6 +75,6 @@ paths:
       -g 60 -keyint_min 60 -sc_threshold 0
       -c:a aac -b:a 64k -ar 44100
       -f flv rtmp://localhost:1935/live/${key}_low
-    runOnReadyRestart: yes
+    runOnAvailableRestart: yes
 
 
