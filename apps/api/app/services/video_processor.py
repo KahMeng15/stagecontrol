@@ -171,8 +171,8 @@ def repair_all_recordings_in_storage() -> int:
     Scans the recordings storage directory and checks/repairs all MP4 files
     for corrupted mvhd headers. Returns count of repaired files.
     """
-    from app.core.config import settings
-    rec_dir = Path(settings.RECORDINGS_DIR).resolve()
+    from app.config import RECORDINGS_DIR
+    rec_dir = Path(RECORDINGS_DIR).resolve()
     if not rec_dir.exists():
         return 0
 
