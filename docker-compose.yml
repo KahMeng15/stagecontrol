@@ -30,8 +30,11 @@ services:
     environment:
       - NEXT_PUBLIC_API_URL=/api
       - INTERNAL_API_URL=http://api:8000
+      - INTERNAL_MEDIAMTX_HLS_URL=http://mediamtx:8888
+      - INTERNAL_MEDIAMTX_WEBRTC_URL=http://mediamtx:8889
     depends_on:
       - api
+      - mediamtx
 
   mediamtx:
     image: ghcr.io/kahmeng15/stagecontrol-mediamtx:latest
