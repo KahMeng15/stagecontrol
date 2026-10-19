@@ -59,6 +59,13 @@ async def lifespan(app: FastAPI):
     except Exception as col_err:
         logger.warning(f"Column check / alter table note: {col_err}")
 
+    # Auto-repair corrupted mvhd headers in existing recordings on storage volume
+    try:
+        from app.services.video_processor import repair_all_recordings_in_storage
+        repair_all_recordings_in_storage()
+    except Exception as rep_err:
+        logger.warning(f"Startup recordings repair check note: {rep_err}")
+
     # Start the automated stream transcription monitor
     await transcription_service.start_monitor()
 

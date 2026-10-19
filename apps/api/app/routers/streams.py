@@ -336,6 +336,8 @@ def list_event_recordings(
                 # File is settled on disk
                 rec_status = "ready"
                 if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
+                    from app.services.video_processor import repair_corrupted_mvhd
+                    repair_corrupted_mvhd(file)
                     meta = probe_video_metadata(file)
                     duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
                 else:
@@ -489,9 +491,20 @@ def stream_recording_video(
         if proxy_path.exists() and proxy_path.stat().st_size > 1024:
             target_path = proxy_path
 
-    # If the file being streamed is settled and still an unindexed fragmented MP4, faststart remux it
+    # Ensure mvhd box is healthy before serving to browser
     now_utc = datetime.now(timezone.utc)
     mtime = datetime.fromtimestamp(target_path.stat().st_mtime, tz=timezone.utc)
+    if (now_utc - mtime).total_seconds() >= 4:
+        from app.services.video_processor import repair_corrupted_mvhd
+        if repair_corrupted_mvhd(target_path):
+            meta = probe_video_metadata(target_path)
+            if meta.get("duration", 0.0) > 0 and target_path == file_path:
+                recording.duration_seconds = round(meta["duration"], 1)
+                recording.file_size_bytes = target_path.stat().st_size
+                recording.status = "ready"
+                db.commit()
+
+    # If the file being streamed is settled and still an unindexed fragmented MP4, faststart remux it
     if (now_utc - mtime).total_seconds() >= 4 and is_fragmented_mp4(target_path):
         success, exact_dur, new_size = remux_to_faststart_mp4(target_path)
         if success and target_path == file_path:
@@ -530,6 +543,9 @@ def optimize_single_recording(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Recording media file missing from disk"
         )
+
+    from app.services.video_processor import repair_corrupted_mvhd
+    repair_corrupted_mvhd(file_path)
 
     if is_fragmented_mp4(file_path):
         success, exact_dur, new_size = remux_to_faststart_mp4(file_path)

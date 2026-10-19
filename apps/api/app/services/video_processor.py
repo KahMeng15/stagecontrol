@@ -40,10 +40,151 @@ def is_fragmented_mp4(file_path: Path) -> bool:
     return False
 
 
-def probe_video_metadata(file_path: Path) -> dict:
+def repair_corrupted_mvhd(file_path: Path) -> bool:
+    """
+    Detects and repairs corrupted 'mvhd' (Movie Header Box) atom lengths in MP4 files.
+
+    In certain streaming or interrupted remux scenarios, MediaMTX or FFmpeg writes the
+    total mdat size (e.g. 1-2 GB) into the 4-byte mvhd box size field instead of the
+    standard ISO BMFF length (108 bytes for version 0, 120 bytes for version 1).
+    Because mvhd claims to exceed the entire moov container, browser demuxers (Chrome/Safari)
+    and ffprobe fail with 'Output file does not contain any stream' or NotSupportedError.
+
+    This function inspects the mvhd atom and repairs the 4-byte box size in-place.
+    Returns True if a repair was made, False otherwise.
+    """
+    if not file_path.exists() or file_path.stat().st_size < 128:
+        return False
+
+    repaired = False
+    try:
+        file_size = file_path.stat().st_size
+        with open(file_path, "r+b") as f:
+            # 1. Sequential top-level atom walking
+            curr = 0
+            while curr < file_size:
+                f.seek(curr)
+                hdr = f.read(8)
+                if len(hdr) < 8:
+                    break
+                box_size, box_tag = struct.unpack(">I4s", hdr)
+                if box_size == 1:
+                    ext_hdr = f.read(8)
+                    if len(ext_hdr) < 8:
+                        break
+                    box_size = struct.unpack(">Q", ext_hdr)[0]
+                    hdr_len = 16
+                elif box_size == 0:
+                    box_size = file_size - curr
+                    hdr_len = 8
+                else:
+                    hdr_len = 8
+
+                if box_tag == b"moov":
+                    # Check first subbox of moov
+                    f.seek(curr + hdr_len)
+                    sub_hdr = f.read(8)
+                    if len(sub_hdr) == 8:
+                        sub_size, sub_tag = struct.unpack(">I4s", sub_hdr)
+                        if sub_tag == b"mvhd":
+                            ver_byte = f.read(1)
+                            version = ver_byte[0] if ver_byte else 0
+                            expected_size = 120 if version == 1 else 108
+                            if sub_size != expected_size:
+                                f.seek(curr + hdr_len)
+                                f.write(struct.pack(">I", expected_size))
+                                f.flush()
+                                logger.info(
+                                    f"Repaired corrupted mvhd size in {file_path.name}: "
+                                    f"was {sub_size} (0x{sub_size:08x}), patched to {expected_size}"
+                                )
+                                repaired = True
+                                break
+
+                    # If not first subbox, search within moov payload
+                    moov_payload_size = min(box_size - hdr_len, 16 * 1024 * 1024)
+                    f.seek(curr + hdr_len)
+                    moov_data = f.read(moov_payload_size)
+                    idx = moov_data.find(b"mvhd")
+                    if idx >= 4:
+                        sub_size = struct.unpack(">I", moov_data[idx - 4 : idx])[0]
+                        ver = moov_data[idx + 4] if len(moov_data) > idx + 4 else 0
+                        expected_size = 120 if ver == 1 else 108
+                        if sub_size != expected_size:
+                            f.seek(curr + hdr_len + idx - 4)
+                            f.write(struct.pack(">I", expected_size))
+                            f.flush()
+                            logger.info(
+                                f"Repaired corrupted mvhd size in moov payload of {file_path.name}: "
+                                f"was {sub_size} (0x{sub_size:08x}), patched to {expected_size}"
+                            )
+                            repaired = True
+                    break
+
+                if box_size < hdr_len or curr + box_size > file_size:
+                    break
+                curr += box_size
+
+            # 2. Fallback byte search across candidate chunks (first 32MB and last 32MB)
+            if not repaired:
+                for scan_start, scan_len in [
+                    (0, min(file_size, 32 * 1024 * 1024)),
+                    (max(0, file_size - 32 * 1024 * 1024), min(file_size, 32 * 1024 * 1024)),
+                ]:
+                    f.seek(scan_start)
+                    chunk = f.read(scan_len)
+                    pos = chunk.find(b"mvhd")
+                    if pos >= 4:
+                        sub_size = struct.unpack(">I", chunk[pos - 4 : pos])[0]
+                        ver = chunk[pos + 4] if len(chunk) > pos + 4 else 0
+                        expected_size = 120 if ver == 1 else 108
+                        if sub_size != expected_size and (sub_size > 500 or sub_size < 100):
+                            f.seek(scan_start + pos - 4)
+                            f.write(struct.pack(">I", expected_size))
+                            f.flush()
+                            logger.info(
+                                f"Repaired corrupted mvhd size via fallback scan in {file_path.name}: "
+                                f"was {sub_size} (0x{sub_size:08x}), patched to {expected_size}"
+                            )
+                            repaired = True
+                            break
+    except Exception as e:
+        logger.warning(f"Error checking/repairing mvhd for {file_path.name}: {e}")
+        return False
+
+    return repaired
+
+
+def repair_all_recordings_in_storage() -> int:
+    """
+    Scans the recordings storage directory and checks/repairs all MP4 files
+    for corrupted mvhd headers. Returns count of repaired files.
+    """
+    from app.core.config import settings
+    rec_dir = Path(settings.RECORDINGS_DIR).resolve()
+    if not rec_dir.exists():
+        return 0
+
+    repaired_count = 0
+    for mp4_file in rec_dir.rglob("*.mp4"):
+        if ".tmp" in mp4_file.name or ".part" in mp4_file.name:
+            continue
+        try:
+            if repair_corrupted_mvhd(mp4_file):
+                repaired_count += 1
+        except Exception as e:
+            logger.warning(f"Error during storage scan for {mp4_file.name}: {e}")
+
+    if repaired_count > 0:
+        logger.info(f"Storage startup scan completed: auto-repaired {repaired_count} take(s)")
+    return repaired_count
+
+
+def probe_video_metadata(file_path: Path, retry_repair: bool = True) -> dict:
     """
     Executes ffprobe to extract exact duration (seconds as float), bit rate,
     resolution, and audio/video stream parameters.
+    Automatically detects and repairs corrupted mvhd headers if ffprobe fails.
     """
     if not file_path.exists() or file_path.stat().st_size < 1024:
         return {}
@@ -59,6 +200,8 @@ def probe_video_metadata(file_path: Path) -> dict:
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         if res.returncode != 0:
+            if retry_repair and repair_corrupted_mvhd(file_path):
+                return probe_video_metadata(file_path, retry_repair=False)
             logger.warning(f"ffprobe failed for {file_path.name}: {res.stderr}")
             return {}
 
@@ -79,6 +222,11 @@ def probe_video_metadata(file_path: Path) -> dict:
                 duration = float(video_stream.get("duration", 0.0))
             except (ValueError, TypeError):
                 duration = 0.0
+
+        # If ffprobe returned zero duration or no streams, attempt mvhd repair and re-probe
+        if (duration <= 0.0 or not streams) and retry_repair:
+            if repair_corrupted_mvhd(file_path):
+                return probe_video_metadata(file_path, retry_repair=False)
 
         size = int(fmt.get("size", file_path.stat().st_size))
         bit_rate = 0
@@ -114,6 +262,7 @@ def remux_to_faststart_mp4(file_path: Path) -> tuple[bool, float, int]:
     if not file_path.exists() or file_path.stat().st_size < 1024:
         return False, 0.0, 0
 
+    repair_corrupted_mvhd(file_path)
     tmp_path = file_path.with_name(f"{file_path.stem}.faststart_tmp.mp4")
     try:
         cmd = [
@@ -160,6 +309,7 @@ def generate_compressed_proxy(master_file: Path) -> tuple[bool, Optional[Path], 
     if not master_file.exists() or master_file.stat().st_size < 1024:
         return False, None, 0
 
+    repair_corrupted_mvhd(master_file)
     proxy_path = master_file.with_name(f"{master_file.stem}_720p.mp4")
     tmp_path = master_file.with_name(f"{master_file.stem}_720p.tmp.mp4")
 
