@@ -1,6 +1,18 @@
-// API Client for StageControl
+const resolveApiBase = (): string => {
+  if (typeof window !== 'undefined') {
+    const envUrl = process.env.NEXT_PUBLIC_API_URL;
+    if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost')) {
+      return envUrl;
+    }
+    if ((window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') && window.location.port === '3000') {
+      return envUrl || 'http://localhost:8000/api';
+    }
+    return '/api';
+  }
+  return process.env.INTERNAL_API_URL ? `${process.env.INTERNAL_API_URL}/api` : (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api');
+};
 
-export const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+export const API_BASE = resolveApiBase();
 
 export interface User {
   id: string;
@@ -544,9 +556,10 @@ export function getWebSocketUrl(path: string): string {
   const queryPrefix = cleanPath.includes('?') ? '&' : '?';
   const tokenQuery = token ? `${queryPrefix}token=${encodeURIComponent(token)}` : '';
 
-  if (process.env.NEXT_PUBLIC_API_URL) {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost')) {
     try {
-      const u = new URL(process.env.NEXT_PUBLIC_API_URL);
+      const u = new URL(envUrl);
       const wsProto = u.protocol === 'https:' ? 'wss:' : 'ws:';
       return `${wsProto}//${u.host}${cleanPath}${tokenQuery}`;
     } catch {}
@@ -554,8 +567,9 @@ export function getWebSocketUrl(path: string): string {
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.hostname;
-  const port = window.location.port === '3000' ? '8000' : window.location.port;
-  return `${wsProtocol}//${host}${port ? `:${port}` : ''}${cleanPath}${tokenQuery}`;
+  const isLocalDev = (host === 'localhost' || host === '127.0.0.1') && window.location.port === '3000';
+  const port = isLocalDev ? ':8000' : (window.location.port ? `:${window.location.port}` : '');
+  return `${wsProtocol}//${host}${port}${cleanPath}${tokenQuery}`;
 }
 
 export function getAudioMediaUrl(urlPath: string): string {

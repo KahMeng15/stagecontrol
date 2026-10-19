@@ -214,6 +214,7 @@ export default function LoginPage() {
                     <input
                       type="text"
                       required
+                      autoComplete="username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       placeholder={authMode === 'register' ? 'e.g. stagemanager_alex' : 'alex or alex@event.org'}
@@ -235,6 +236,7 @@ export default function LoginPage() {
                         <input
                           type="email"
                           required
+                          autoComplete="email"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
                           placeholder="alex@crew.org"
@@ -269,6 +271,7 @@ export default function LoginPage() {
                     <input
                       type="password"
                       required
+                      autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••••••"
