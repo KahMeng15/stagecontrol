@@ -606,7 +606,13 @@ export default function ScriptTracker({
             const data = JSON.parse(event.data);
 
             // Server-broadcasted script position jump or sync
-            if (data.type === 'script_sync' || data.type === 'script_jump') {
+            if (data.type === 'connected' && data.active_block_id) {
+              setActiveBlockId(data.active_block_id);
+              const targetBlock = allBlocksRef.current.find((b) => b.id === data.active_block_id);
+              if (targetBlock && selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== targetBlock.section_id) {
+                setSelectedSectionId('all');
+              }
+            } else if (data.type === 'script_sync' || data.type === 'script_jump') {
               if (data.block_id) {
                 setActiveBlockId(data.block_id);
                 lastMatchTimeRef.current = Date.now();
@@ -859,6 +865,10 @@ export default function ScriptTracker({
     } else if (isSMOrAdmin) {
       try {
         await api.jumpScriptBlock(eventId, block.id);
+        toast.success(`Jumped to line #${block.order_index + 1}`, {
+          description: 'Synced across all devices',
+          duration: 2000,
+        });
       } catch (err) {
         console.error('Failed to broadcast script jump:', err);
       }

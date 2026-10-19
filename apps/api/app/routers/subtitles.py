@@ -189,13 +189,18 @@ async def subtitle_websocket(
 
     await websocket.accept()
     await transcription_service.register_subscriber(actual_event_id, websocket)
+    if event_id != actual_event_id:
+        await transcription_service.register_subscriber(event_id, websocket)
 
     try:
-        # Send initial connected status
+        from app.routers.scripts import event_active_blocks
+        current_active = event_active_blocks.get(actual_event_id) or event_active_blocks.get(event_id)
+        # Send initial connected status including currently active script block
         await websocket.send_json({
             "type": "connected",
             "event_id": actual_event_id,
-            "is_transcribing": transcription_service.is_transcribing(actual_event_id)
+            "is_transcribing": transcription_service.is_transcribing(actual_event_id),
+            "active_block_id": current_active
         })
 
         # Keep connection open and respond to pings

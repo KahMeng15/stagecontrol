@@ -33,6 +33,8 @@ event_last_script_match_time: dict[str, float] = {}
 def get_event_membership(db: Session, event_id: str, user: User) -> Optional[Membership]:
     if user.is_superadmin:
         return Membership(user_id=user.id, event_id=event_id, role=EventRole.ADMIN)
+    if user.id.startswith("guest_"):
+        return Membership(user_id=user.id, event_id=event_id, role=EventRole.VIEWER)
     return db.query(Membership).filter(
         Membership.event_id == event_id,
         Membership.user_id == user.id
@@ -45,12 +47,17 @@ def get_event_script(
     current_user: User = Depends(get_current_user)
 ):
     """Fetches the active script for this event along with its sections and blocks."""
-    membership = get_event_membership(db, event_id, current_user)
+    event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    actual_event_id = event.id
+
+    membership = get_event_membership(db, actual_event_id, current_user)
     if not membership:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     script = db.query(Script).filter(
-        Script.event_id == event_id,
+        Script.event_id == actual_event_id,
         Script.is_active == 1
     ).order_by(Script.version.desc()).first()
 
@@ -59,7 +66,7 @@ def get_event_script(
 
     # Compute total blocks
     total_blocks = sum(len(s.blocks) for s in script.sections)
-    active_block = event_active_blocks.get(event_id)
+    active_block = event_active_blocks.get(actual_event_id) or event_active_blocks.get(event_id)
 
     return ScriptResponse(
         id=script.id,
@@ -129,22 +136,30 @@ async def jump_script_block(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Stage Manager manual jump: sets the active script block and broadcasts to all connected crew."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    """Manual jump: sets the active script block and broadcasts to all connected viewers and crew."""
+    event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    actual_event_id = event.id
+
+    membership = get_event_membership(db, actual_event_id, current_user)
+    if not membership or not has_sufficient_role(membership.role, EventRole.CREW):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Crew, Stage Manager or Admin permissions required")
 
     block = db.query(ScriptBlock).filter(ScriptBlock.id == payload.block_id).first()
     if not block:
         raise HTTPException(status_code=404, detail="Script block not found")
 
+    event_active_blocks[actual_event_id] = payload.block_id
     event_active_blocks[event_id] = payload.block_id
-    event_last_script_match_time[event_id] = time.time()
+    now_ts = time.time()
+    event_last_script_match_time[actual_event_id] = now_ts
+    event_last_script_match_time[event_id] = now_ts
 
-    # Broadcast to all crew via transcription service WebSocket
+    # Broadcast to all connected viewers & crew via transcription service WebSocket
     broadcast_payload = {
         "type": "script_jump",
-        "event_id": event_id,
+        "event_id": actual_event_id,
         "block_id": payload.block_id,
         "section_id": block.section_id,
         "order_index": block.order_index,
@@ -153,7 +168,9 @@ async def jump_script_block(
         "cue": block.cue,
         "triggered_by": current_user.username or current_user.email
     }
-    await transcription_service.broadcast_subtitle(event_id, broadcast_payload)
+    await transcription_service.broadcast_subtitle(actual_event_id, broadcast_payload)
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, broadcast_payload)
 
     return {"status": "ok", "active_block_id": payload.block_id}
 

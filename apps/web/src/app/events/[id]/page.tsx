@@ -107,6 +107,7 @@ function EventContent() {
   const isAdmin = event?.user_role === 'admin';
   const isSMOrAdmin = isAdmin || event?.user_role === 'stage_manager';
   const hasWalkieAccess = isSMOrAdmin || event?.user_role === 'crew';
+  const canControlScript = isSMOrAdmin || event?.user_role === 'crew';
 
   const walkie = useWalkieTalkie({
     eventId: eventId,
@@ -588,14 +589,14 @@ function EventContent() {
             </div>
 
             {/* Embedded Live Script & Cue Tracker */}
-            <ScriptTracker eventId={event.id} isSMOrAdmin={isSMOrAdmin} />
+            <ScriptTracker eventId={event.id} isSMOrAdmin={canControlScript} />
           </TabsContent>
 
           {/* Tab 2: Dedicated Live Script & Cues */}
           <TabsContent value="script" className="space-y-6 mt-0">
             <ScriptTracker
               eventId={event.id}
-              isSMOrAdmin={isSMOrAdmin}
+              isSMOrAdmin={canControlScript}
               className="min-h-[700px]"
             />
           </TabsContent>
