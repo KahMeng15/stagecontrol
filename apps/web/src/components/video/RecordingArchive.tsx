@@ -233,7 +233,10 @@ export function RecordingArchive({
       setError(null);
       const data = await api.listRecordings(eventId);
       setRecordings(data);
-      setSelectedRecording((prev) => prev ?? (data.length > 0 ? data[0] : null));
+      setSelectedRecording((prev) => {
+        if (!prev) return data.length > 0 ? data[0] : null;
+        return data.find((r) => r.id === prev.id) || prev;
+      });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load recordings');
     } finally {
@@ -362,8 +365,11 @@ export function RecordingArchive({
           setIsBuffering(false);
         })
         .catch((err) => {
+          if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('interrupted'))) {
+            return;
+          }
           console.error("Playback error:", err);
-          setVideoError("Unable to play video take. Click retry or download take.");
+          setVideoError("Unable to play video take. Click retry or Auto-Fix.");
           setIsPlaying(false);
           setIsBuffering(false);
         });
@@ -693,7 +699,7 @@ export function RecordingArchive({
 
               <video
                 ref={videoRef}
-                key={`${selectedRecording.id}-${replayQuality}`}
+                key={selectedRecording.id}
                 src={getAuthenticatedUrl(getReplayStreamUrl(selectedRecording, replayQuality))}
                 playsInline
                 preload="metadata"
