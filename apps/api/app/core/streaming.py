@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB chunk size for video streaming
-MAX_CHUNK_WINDOW = 3 * 1024 * 1024  # 3 MB slice cap (~25-35s of 720p video)
+MAX_CHUNK_WINDOW = 8 * 1024 * 1024  # 8 MB slice cap (guarantees entire moov container fits without truncation)
 
 def parse_range_header(range_header: str, file_size: int, max_window: int = MAX_CHUNK_WINDOW) -> tuple[int, int]:
     """

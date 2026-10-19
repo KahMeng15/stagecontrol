@@ -125,29 +125,40 @@ def repair_corrupted_mvhd(file_path: Path) -> bool:
                     break
                 curr += box_size
 
-            # 2. Fallback byte search across candidate chunks (first 32MB and last 32MB)
+            # 2. Candidate chunk and full file scan with version byte validation
             if not repaired:
-                for scan_start, scan_len in [
-                    (0, min(file_size, 32 * 1024 * 1024)),
-                    (max(0, file_size - 32 * 1024 * 1024), min(file_size, 32 * 1024 * 1024)),
-                ]:
-                    f.seek(scan_start)
-                    chunk = f.read(scan_len)
-                    pos = chunk.find(b"mvhd")
-                    if pos >= 4:
-                        sub_size = struct.unpack(">I", chunk[pos - 4 : pos])[0]
-                        ver = chunk[pos + 4] if len(chunk) > pos + 4 else 0
-                        expected_size = 120 if ver == 1 else 108
-                        if sub_size != expected_size and (sub_size > 500 or sub_size < 100):
-                            f.seek(scan_start + pos - 4)
-                            f.write(struct.pack(">I", expected_size))
-                            f.flush()
-                            logger.info(
-                                f"Repaired corrupted mvhd size via fallback scan in {file_path.name}: "
-                                f"was {sub_size} (0x{sub_size:08x}), patched to {expected_size}"
-                            )
-                            repaired = True
+                offset = 0
+                block_size = 16 * 1024 * 1024
+                while offset < file_size:
+                    f.seek(offset)
+                    # 16-byte overlap prevents missing "mvhd" split across block boundaries
+                    block = f.read(block_size + 16)
+                    if not block:
+                        break
+                    pos = 0
+                    while True:
+                        pos = block.find(b"mvhd", pos)
+                        if pos == -1:
                             break
+                        if pos >= 4:
+                            sub_size = struct.unpack(">I", block[pos - 4 : pos])[0]
+                            ver = block[pos + 4] if len(block) > pos + 4 else 255
+                            if ver in (0, 1):
+                                expected_size = 120 if ver == 1 else 108
+                                if sub_size != expected_size and (sub_size > 500 or sub_size < 100):
+                                    f.seek(offset + pos - 4)
+                                    f.write(struct.pack(">I", expected_size))
+                                    f.flush()
+                                    logger.info(
+                                        f"Repaired corrupted mvhd size via scan in {file_path.name}: "
+                                        f"was {sub_size} (0x{sub_size:08x}), patched to {expected_size}"
+                                    )
+                                    repaired = True
+                                    break
+                        pos += 4
+                    if repaired:
+                        break
+                    offset += block_size
     except Exception as e:
         logger.warning(f"Error checking/repairing mvhd for {file_path.name}: {e}")
         return False

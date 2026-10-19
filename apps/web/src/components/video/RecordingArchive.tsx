@@ -648,7 +648,20 @@ export function RecordingArchive({
                     <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
                     <span>{videoError}</span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {isSMOrAdmin && (
+                      <Button
+                        size="xs"
+                        variant="secondary"
+                        onClick={() => handleOptimizeTake(selectedRecording.id)}
+                        disabled={optimizingId === selectedRecording.id}
+                        className="gap-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 text-[11px] border border-amber-400/30 h-7 px-2.5 font-semibold"
+                        title="Auto-repair container headers, faststart remux, and compress 720p proxy"
+                      >
+                        <Sparkles className={cn("w-3 h-3 text-amber-400", optimizingId === selectedRecording.id && "animate-spin")} />
+                        <span>{optimizingId === selectedRecording.id ? "Repairing..." : "Auto-Fix Take"}</span>
+                      </Button>
+                    )}
                     <Button
                       size="xs"
                       variant="secondary"
@@ -656,7 +669,7 @@ export function RecordingArchive({
                       className="gap-1 bg-red-500/20 hover:bg-red-500/30 text-white text-[11px] border border-red-400/30 h-7 px-2.5 font-semibold"
                     >
                       <RotateCcw className="w-3 h-3" />
-                      <span>Retry Playback</span>
+                      <span>Retry</span>
                     </Button>
                     <button
                       onClick={() => setVideoError(null)}
@@ -698,8 +711,21 @@ export function RecordingArchive({
                 onSeeked={() => setIsBuffering(false)}
                 onPause={() => setIsPlaying(false)}
                 onError={(e) => {
-                  console.error("Video error event:", e);
-                  setVideoError("Playback interrupted. Click Retry to re-connect stream.");
+                  const mediaErr = (e.currentTarget as HTMLVideoElement)?.error;
+                  console.error("Video error event:", {
+                    code: mediaErr?.code,
+                    message: mediaErr?.message,
+                    src: e.currentTarget?.currentSrc || e.currentTarget?.src,
+                  });
+                  let detail = "Playback interrupted. Click Retry or Auto-Fix.";
+                  if (mediaErr?.code === 4) {
+                    detail = "Container format error (unindexed or corrupt box). Click 'Auto-Fix Take' to repair.";
+                  } else if (mediaErr?.code === 2) {
+                    detail = "Network error loading video slice. Click Retry to reconnect.";
+                  } else if (mediaErr?.message) {
+                    detail = `${mediaErr.message}. Click 'Auto-Fix Take' to repair.`;
+                  }
+                  setVideoError(detail);
                   setIsPlaying(false);
                   setIsBuffering(false);
                 }}
