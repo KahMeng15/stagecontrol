@@ -207,11 +207,13 @@ export function RecordingArchive({
     videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
   };
 
-  const getAuthenticatedUrl = useCallback((url: string) => {
+  const getAuthenticatedUrl = useCallback((url: string | null | undefined) => {
     if (!url) return '';
-    if (!token) return url;
-    const separator = url.includes('?') ? '&' : '?';
-    return `${url}${separator}token=${encodeURIComponent(token)}`;
+    // Strip any hardcoded absolute hostnames (e.g. http://localhost:8000 or http://api:8000) to ensure relative path
+    const relativeUrl = url.replace(/^https?:\/\/[^/]+/, '');
+    if (!token) return relativeUrl;
+    const separator = relativeUrl.includes('?') ? '&' : '?';
+    return `${relativeUrl}${separator}token=${encodeURIComponent(token)}`;
   }, [token]);
 
   const loadRecordings = useCallback(async () => {
@@ -220,15 +222,13 @@ export function RecordingArchive({
       setError(null);
       const data = await api.listRecordings(eventId);
       setRecordings(data);
-      if (data.length > 0 && !selectedRecording) {
-        setSelectedRecording(data[0]);
-      }
+      setSelectedRecording((prev) => prev ?? (data.length > 0 ? data[0] : null));
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load recordings');
     } finally {
       setLoading(false);
     }
-  }, [eventId, selectedRecording]);
+  }, [eventId]);
 
   useEffect(() => {
     loadRecordings();

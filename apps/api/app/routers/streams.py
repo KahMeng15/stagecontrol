@@ -322,24 +322,12 @@ def list_event_recordings(
                 duration = max(0.0, (now_utc - start_dt).total_seconds())
             else:
                 # File is settled on disk
-                if is_fragmented_mp4(file):
-                    success, exact_dur, new_size = remux_to_faststart_mp4(file)
-                    if success:
-                        duration = exact_dur
-                        file_size = new_size
-                        rec_status = "ready"
-                    else:
-                        meta = probe_video_metadata(file)
-                        duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
-                        rec_status = "ready"
+                rec_status = "ready"
+                if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
+                    meta = probe_video_metadata(file)
+                    duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
                 else:
-                    # Already faststart / standard MP4
-                    rec_status = "ready"
-                    if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
-                        meta = probe_video_metadata(file)
-                        duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
-                    else:
-                        duration = existing.duration_seconds
+                    duration = existing.duration_seconds
 
             rec_target = None
             if not existing:
@@ -388,9 +376,26 @@ def list_event_recordings(
         .all()
     )
 
-    base_api = f"{str(request.base_url).rstrip('/')}/api/events/{event.id}/recordings"
-    results = []
+    valid_recordings = []
+    has_orphans = False
     for r in recordings:
+        if r.filename.endswith(".faststart_tmp.mp4") or ".tmp" in r.filename:
+            db.delete(r)
+            has_orphans = True
+            continue
+        file_path = (RECORDINGS_DIR / r.filename).resolve()
+        if not file_path.exists():
+            alt_path = Path("/storage/recordings") / r.filename
+            if not alt_path.exists():
+                db.delete(r)
+                has_orphans = True
+                continue
+        valid_recordings.append(r)
+    if has_orphans:
+        db.commit()
+
+    results = []
+    for r in valid_recordings:
         resp = RecordingResponse(
             id=r.id,
             event_id=r.event_id,
@@ -400,8 +405,8 @@ def list_event_recordings(
             file_size_bytes=r.file_size_bytes,
             status=r.status,
             created_at=r.created_at,
-            stream_url=f"{base_api}/{r.id}/stream",
-            download_url=f"{base_api}/{r.id}/download"
+            stream_url=f"/api/events/{event.id}/recordings/{r.id}/stream",
+            download_url=f"/api/events/{event.id}/recordings/{r.id}/download"
         )
         results.append(resp)
 
@@ -502,7 +507,6 @@ def optimize_single_recording(
 
     db.commit()
     db.refresh(recording)
-    base_api = f"{str(request.base_url).rstrip('/')}/api/events/{event.id}/recordings"
     return RecordingResponse(
         id=recording.id,
         event_id=recording.event_id,
@@ -512,8 +516,8 @@ def optimize_single_recording(
         file_size_bytes=recording.file_size_bytes,
         status=recording.status,
         created_at=recording.created_at,
-        stream_url=f"{base_api}/{recording.id}/stream",
-        download_url=f"{base_api}/{recording.id}/download"
+        stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream",
+        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download"
     )
 
 @router.get("/recordings/{recording_id}/download")
@@ -578,7 +582,6 @@ def rename_recording(
     db.commit()
     db.refresh(recording)
 
-    base_api = f"{str(request.base_url).rstrip('/')}/api/events/{event.id}/recordings"
     return RecordingResponse(
         id=recording.id,
         event_id=recording.event_id,
@@ -588,8 +591,8 @@ def rename_recording(
         file_size_bytes=recording.file_size_bytes,
         status=recording.status,
         created_at=recording.created_at,
-        stream_url=f"{base_api}/{recording.id}/stream",
-        download_url=f"{base_api}/{recording.id}/download"
+        stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream",
+        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download"
     )
 
 @router.delete("/recordings/{recording_id}", status_code=status.HTTP_204_NO_CONTENT)

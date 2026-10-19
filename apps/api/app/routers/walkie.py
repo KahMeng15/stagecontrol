@@ -72,7 +72,6 @@ def get_walkie_calls(
 
     calls = query.order_by(WalkieCall.created_at.desc()).limit(limit).all()
 
-    base_api = str(request.base_url).rstrip('/')
     res = []
     for c in calls:
         res.append(WalkieCallResponse(
@@ -81,7 +80,7 @@ def get_walkie_calls(
             caller_id=c.caller_id,
             caller_name=c.caller_name,
             caller_role=c.caller_role,
-            audio_url=f"{base_api}/api/events/{event.id}/walkie-talkie/calls/{c.id}/audio",
+            audio_url=f"/api/events/{event.id}/walkie-talkie/calls/{c.id}/audio",
             duration_seconds=c.duration_seconds,
             file_size_bytes=c.file_size_bytes,
             transcription=c.transcription,
