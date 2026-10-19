@@ -45,6 +45,17 @@ async def lifespan(app: FastAPI):
                 if "is_music" not in sub_cols:
                     conn.execute(text("ALTER TABLE subtitles ADD COLUMN is_music BOOLEAN NOT NULL DEFAULT 0"))
                     conn.commit()
+            if "recordings" in tables:
+                rec_cols = [c["name"] for c in insp.get_columns("recordings")]
+                if "proxy_filename" not in rec_cols:
+                    conn.execute(text("ALTER TABLE recordings ADD COLUMN proxy_filename VARCHAR(255)"))
+                    conn.commit()
+                if "proxy_size_bytes" not in rec_cols:
+                    conn.execute(text("ALTER TABLE recordings ADD COLUMN proxy_size_bytes INTEGER"))
+                    conn.commit()
+                if "is_optimized" not in rec_cols:
+                    conn.execute(text("ALTER TABLE recordings ADD COLUMN is_optimized INTEGER NOT NULL DEFAULT 0"))
+                    conn.commit()
     except Exception as col_err:
         logger.warning(f"Column check / alter table note: {col_err}")
 

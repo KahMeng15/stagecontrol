@@ -149,3 +149,58 @@ def remux_to_faststart_mp4(file_path: Path) -> tuple[bool, float, int]:
             except OSError:
                 pass
         return False, 0.0, 0
+
+
+def generate_compressed_proxy(master_file: Path) -> tuple[bool, Optional[Path], int]:
+    """
+    Compresses raw master MP4 into a 720p ~800kbps faststart web proxy.
+    Typically reduces file size by 80-88% with high visual fidelity.
+    Returns: (success: bool, proxy_path: Optional[Path], proxy_size_bytes: int).
+    """
+    if not master_file.exists() or master_file.stat().st_size < 1024:
+        return False, None, 0
+
+    proxy_path = master_file.with_name(f"{master_file.stem}_720p.mp4")
+    tmp_path = master_file.with_name(f"{master_file.stem}_720p.tmp.mp4")
+
+    # If proxy already exists and is non-empty, return it immediately
+    if proxy_path.exists() and proxy_path.stat().st_size > 1024:
+        return True, proxy_path, proxy_path.stat().st_size
+
+    try:
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", str(master_file),
+            "-vf", "scale=-2:720",
+            "-c:v", "libx264",
+            "-preset", "veryfast",
+            "-crf", "26",
+            "-maxrate", "950k",
+            "-bufsize", "1900k",
+            "-c:a", "aac",
+            "-b:a", "96k",
+            "-movflags", "+faststart",
+            str(tmp_path)
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if res.returncode == 0 and tmp_path.exists() and tmp_path.stat().st_size > 1024:
+            os.replace(tmp_path, proxy_path)
+            size = proxy_path.stat().st_size
+            pct = (size / max(1, master_file.stat().st_size)) * 100
+            logger.info(
+                f"Generated 720p web proxy for {master_file.name}: {size} bytes ({pct:.1f}% of master)"
+            )
+            return True, proxy_path, size
+        else:
+            logger.error(f"FFmpeg proxy compression failed for {master_file.name}: {res.stderr}")
+            if tmp_path.exists():
+                tmp_path.unlink()
+            return False, None, 0
+    except Exception as e:
+        logger.error(f"Exception compressing proxy for {master_file.name}: {e}")
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        return False, None, 0

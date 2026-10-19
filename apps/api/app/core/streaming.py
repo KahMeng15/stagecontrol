@@ -6,11 +6,12 @@ from fastapi import HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 CHUNK_SIZE = 1024 * 1024  # 1 MB chunk size for video streaming
+MAX_CHUNK_WINDOW = 3 * 1024 * 1024  # 3 MB slice cap (~25-35s of 720p video)
 
-def parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
+def parse_range_header(range_header: str, file_size: int, max_window: int = MAX_CHUNK_WINDOW) -> tuple[int, int]:
     """
     Parses an HTTP Range header like 'bytes=0-1048575' or 'bytes=1048576-'
-    and returns (start, end).
+    and returns (start, end), capping open-ended ranges to max_window bytes.
     """
     if not range_header:
         return 0, file_size - 1
@@ -21,7 +22,11 @@ def parse_range_header(range_header: str, file_size: int) -> tuple[int, int]:
 
     start_str, end_str = match.groups()
     start = int(start_str) if start_str else 0
-    end = int(end_str) if end_str else file_size - 1
+    if end_str:
+        end = int(end_str)
+    else:
+        # Cap open-ended range request to MAX_CHUNK_WINDOW to prevent uplink saturation
+        end = min(start + max_window - 1, file_size - 1)
 
     if start >= file_size or end >= file_size or start > end:
         raise HTTPException(
@@ -71,6 +76,7 @@ def create_range_video_response(file_path: Path, request: Request, content_type:
                 "Accept-Ranges": "bytes",
                 "Content-Disposition": "inline",
                 "Cache-Control": "public, max-age=86400",
+                "X-Accel-Buffering": "no",
             }
         )
 
@@ -84,6 +90,7 @@ def create_range_video_response(file_path: Path, request: Request, content_type:
         "Accept-Ranges": "bytes",
         "Content-Disposition": "inline",
         "Cache-Control": "public, max-age=86400",
+        "X-Accel-Buffering": "no",
     }
 
     return StreamingResponse(

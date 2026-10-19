@@ -91,6 +91,10 @@ export interface StreamStatus {
   webrtc_whip_url?: string;
   hls_url: string;
   hls_playlist_url: string;
+  hls_low_url?: string;
+  hls_low_playlist_url?: string;
+  webrtc_low_url?: string;
+  webrtc_low_whep_url?: string;
   stream_key?: string | null;
   ready_time?: string | null;
 }
@@ -105,7 +109,11 @@ export interface Recording {
   status: string;
   created_at: string;
   stream_url: string;
+  master_stream_url?: string;
   download_url: string;
+  proxy_filename?: string | null;
+  proxy_size_bytes?: number | null;
+  is_optimized?: boolean;
 }
 
 export interface VideoMarker {

@@ -137,12 +137,20 @@ async def get_stream_status(
         webrtc_whip_url = f"{proto}://{effective_host}/live/{stream_key}/whip"
         hls_url = f"{proto}://{effective_host}/live/{stream_key}"
         hls_playlist_url = f"{proto}://{effective_host}/live/{stream_key}/index.m3u8"
+        webrtc_low_url = f"{proto}://{effective_host}/live/{stream_key}_low"
+        webrtc_low_whep_url = f"{proto}://{effective_host}/live/{stream_key}_low/whep"
+        hls_low_url = f"{proto}://{effective_host}/live/{stream_key}_low"
+        hls_low_playlist_url = f"{proto}://{effective_host}/live/{stream_key}_low/index.m3u8"
     else:
         webrtc_url = f"http://{effective_host}:8889/live/{stream_key}"
         webrtc_whep_url = f"http://{effective_host}:8889/live/{stream_key}/whep"
         webrtc_whip_url = f"http://{effective_host}:8889/live/{stream_key}/whip"
         hls_url = f"http://{effective_host}:8888/live/{stream_key}"
         hls_playlist_url = f"http://{effective_host}:8888/live/{stream_key}/index.m3u8"
+        webrtc_low_url = f"http://{effective_host}:8889/live/{stream_key}_low"
+        webrtc_low_whep_url = f"http://{effective_host}:8889/live/{stream_key}_low/whep"
+        hls_low_url = f"http://{effective_host}:8888/live/{stream_key}_low"
+        hls_low_playlist_url = f"http://{effective_host}:8888/live/{stream_key}_low/index.m3u8"
 
     can_view_key = has_sufficient_role(membership.role, EventRole.STAGE_MANAGER)
 
@@ -158,6 +166,10 @@ async def get_stream_status(
         webrtc_whip_url=webrtc_whip_url,
         hls_url=hls_url,
         hls_playlist_url=hls_playlist_url,
+        hls_low_url=hls_low_url,
+        hls_low_playlist_url=hls_low_playlist_url,
+        webrtc_low_url=webrtc_low_url,
+        webrtc_low_whep_url=webrtc_low_whep_url,
         stream_key=stream_key if can_view_key else None,
         ready_time=ready_time
     )
@@ -293,7 +305,7 @@ def list_event_recordings(
         now_utc = datetime.now(timezone.utc)
 
         for file in event_rec_dir.glob("*.mp4"):
-            if ".tmp" in file.name or ".part" in file.name or ".faststart" in file.name:
+            if ".tmp" in file.name or ".part" in file.name or ".faststart" in file.name or file.name.endswith("_720p.mp4"):
                 continue
 
             rel_path = f"live/{stream_key}/{file.name}"
@@ -329,6 +341,14 @@ def list_event_recordings(
                 else:
                     duration = existing.duration_seconds
 
+            # Check if an optimized 720p proxy exists on disk
+            proxy_file = file.with_name(f"{file.stem}_720p.mp4")
+            proxy_rel = None
+            proxy_size = None
+            if proxy_file.exists() and proxy_file.stat().st_size > 1024:
+                proxy_rel = f"live/{stream_key}/{proxy_file.name}"
+                proxy_size = proxy_file.stat().st_size
+
             rec_target = None
             if not existing:
                 new_rec = Recording(
@@ -338,7 +358,10 @@ def list_event_recordings(
                     file_size_bytes=file_size,
                     duration_seconds=round(duration, 1),
                     status=rec_status,
-                    created_at=start_dt
+                    created_at=start_dt,
+                    proxy_filename=proxy_rel,
+                    proxy_size_bytes=proxy_size,
+                    is_optimized=1 if proxy_rel else 0
                 )
                 db.add(new_rec)
                 db.flush()
@@ -347,6 +370,10 @@ def list_event_recordings(
                 existing.duration_seconds = round(duration, 1)
                 existing.file_size_bytes = file_size
                 existing.status = rec_status
+                if proxy_rel:
+                    existing.proxy_filename = proxy_rel
+                    existing.proxy_size_bytes = proxy_size
+                    existing.is_optimized = 1
                 if existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
                     existing.title = friendly_title
                 rec_target = existing
@@ -406,7 +433,11 @@ def list_event_recordings(
             status=r.status,
             created_at=r.created_at,
             stream_url=f"/api/events/{event.id}/recordings/{r.id}/stream",
-            download_url=f"/api/events/{event.id}/recordings/{r.id}/download"
+            master_stream_url=f"/api/events/{event.id}/recordings/{r.id}/stream?quality=source",
+            download_url=f"/api/events/{event.id}/recordings/{r.id}/download",
+            proxy_filename=r.proxy_filename,
+            proxy_size_bytes=r.proxy_size_bytes,
+            is_optimized=bool(r.is_optimized)
         )
         results.append(resp)
 
@@ -416,13 +447,14 @@ def list_event_recordings(
 def stream_recording_video(
     recording_id: str,
     request: Request,
+    quality: Optional[str] = None,
     event_and_member: tuple[Event, Membership] = Depends(require_event_access),
     db: Session = Depends(get_db)
 ):
     """
     Streams the recorded MP4 file with HTTP 206 Partial Content (range requests)
     for seamless seeking, scrubbing, pause, and resume on all devices.
-    Automatically faststart-remuxes on-the-fly if needed.
+    Automatically serves 720p web proxy by default (unless quality=source requested).
     """
     event, _ = event_and_member
     recording = db.query(Recording).filter(
@@ -450,18 +482,25 @@ def stream_recording_video(
             detail="Recording media file missing from disk"
         )
 
-    # If the file is settled and still an unindexed fragmented MP4, faststart remux it
+    # Determine whether to serve 720p proxy (default for low bandwidth) or master
+    target_path = file_path
+    if quality not in ("source", "master") and recording.proxy_filename:
+        proxy_path = (RECORDINGS_DIR / recording.proxy_filename).resolve()
+        if proxy_path.exists() and proxy_path.stat().st_size > 1024:
+            target_path = proxy_path
+
+    # If the file being streamed is settled and still an unindexed fragmented MP4, faststart remux it
     now_utc = datetime.now(timezone.utc)
-    mtime = datetime.fromtimestamp(file_path.stat().st_mtime, tz=timezone.utc)
-    if (now_utc - mtime).total_seconds() >= 4 and is_fragmented_mp4(file_path):
-        success, exact_dur, new_size = remux_to_faststart_mp4(file_path)
-        if success:
+    mtime = datetime.fromtimestamp(target_path.stat().st_mtime, tz=timezone.utc)
+    if (now_utc - mtime).total_seconds() >= 4 and is_fragmented_mp4(target_path):
+        success, exact_dur, new_size = remux_to_faststart_mp4(target_path)
+        if success and target_path == file_path:
             recording.duration_seconds = round(exact_dur, 1)
             recording.file_size_bytes = new_size
             recording.status = "ready"
             db.commit()
 
-    return create_range_video_response(file_path, request)
+    return create_range_video_response(target_path, request)
 
 @router.post("/recordings/{recording_id}/optimize", response_model=RecordingResponse)
 def optimize_single_recording(
@@ -505,6 +544,16 @@ def optimize_single_recording(
         recording.file_size_bytes = file_path.stat().st_size
         recording.status = "ready"
 
+    # Generate 720p 800k faststart web proxy
+    from app.services.video_processor import generate_compressed_proxy
+    proxy_success, proxy_path, proxy_size = generate_compressed_proxy(file_path)
+    if proxy_success and proxy_path:
+        parts = recording.filename.split("/")
+        stream_key = parts[1] if len(parts) > 1 else event.stream_key
+        recording.proxy_filename = f"live/{stream_key}/{proxy_path.name}"
+        recording.proxy_size_bytes = proxy_size
+        recording.is_optimized = 1
+
     db.commit()
     db.refresh(recording)
     return RecordingResponse(
@@ -517,7 +566,11 @@ def optimize_single_recording(
         status=recording.status,
         created_at=recording.created_at,
         stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream",
-        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download"
+        master_stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream?quality=source",
+        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download",
+        proxy_filename=recording.proxy_filename,
+        proxy_size_bytes=recording.proxy_size_bytes,
+        is_optimized=bool(recording.is_optimized)
     )
 
 @router.get("/recordings/{recording_id}/download")
@@ -592,7 +645,11 @@ def rename_recording(
         status=recording.status,
         created_at=recording.created_at,
         stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream",
-        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download"
+        master_stream_url=f"/api/events/{event.id}/recordings/{recording.id}/stream?quality=source",
+        download_url=f"/api/events/{event.id}/recordings/{recording.id}/download",
+        proxy_filename=recording.proxy_filename,
+        proxy_size_bytes=recording.proxy_size_bytes,
+        is_optimized=bool(recording.is_optimized)
     )
 
 @router.delete("/recordings/{recording_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -617,13 +674,22 @@ def delete_recording(
             detail="Recording not found"
         )
 
-    # Delete physical file
+    # Delete physical master file
     file_path = (RECORDINGS_DIR / recording.filename).resolve()
     if file_path.exists() and str(file_path).startswith(str(RECORDINGS_DIR.resolve())):
         try:
             file_path.unlink()
         except OSError:
             pass
+
+    # Delete physical proxy file if present
+    if recording.proxy_filename:
+        proxy_path = (RECORDINGS_DIR / recording.proxy_filename).resolve()
+        if proxy_path.exists() and str(proxy_path).startswith(str(RECORDINGS_DIR.resolve())):
+            try:
+                proxy_path.unlink()
+            except OSError:
+                pass
 
     db.delete(recording)
     db.commit()

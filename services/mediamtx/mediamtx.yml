@@ -51,14 +51,30 @@ paths:
   all:
     # Allow RTMP / WHIP publishers
     source: publisher
-    
+
+  # Transcoded low-res streams (do not re-transcode or record)
+  ~^live/(?P<key>[^/]+)_low$:
+    source: publisher
+
   # Live streams with automated fMP4 recording to persistent volume
-  ~^live/(?P<key>.+)$:
+  ~^live/(?P<key>[^/]+)$:
     source: publisher
     record: yes
     recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
     recordFormat: fmp4
     recordPartDuration: 1s
     recordSegmentDuration: 1h
+
+    # Automatically generate low-bandwidth 720p @ 800kbps live rendition:
+    runOnReady: >
+      ffmpeg -hide_banner -loglevel warning
+      -i rtmp://localhost:1935/live/$key
+      -vf "scale=1280:720"
+      -c:v libx264 -preset veryfast -tune zerolatency
+      -b:v 800k -maxrate 950k -bufsize 1600k
+      -g 60 -keyint_min 60 -sc_threshold 0
+      -c:a aac -b:a 64k -ar 44100
+      -f flv rtmp://localhost:1935/live/${key}_low
+    runOnReadyRestart: yes
 
 

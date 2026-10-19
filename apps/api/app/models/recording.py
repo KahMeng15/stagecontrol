@@ -14,6 +14,9 @@ class Recording(Base):
     hls_path = Column(String(255), nullable=True)   # HLS master playlist path if generated
     duration_seconds = Column(Float, default=0.0, nullable=False)
     file_size_bytes = Column(Integer, default=0, nullable=False)
+    proxy_filename = Column(String(255), nullable=True)   # Web-optimized 720p proxy MP4
+    proxy_size_bytes = Column(Integer, nullable=True)      # Size of proxy file in bytes
+    is_optimized = Column(Integer, default=0, nullable=False)
     status = Column(String(30), default="ready", nullable=False) # "recording", "processing", "ready", "failed"
     
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)

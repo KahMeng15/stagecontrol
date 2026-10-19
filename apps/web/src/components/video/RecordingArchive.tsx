@@ -31,6 +31,7 @@ import {
   Subtitles,
   Sparkles,
   Music,
+  Zap,
 } from 'lucide-react';
 import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
 import ScriptTracker from '@/components/script/ScriptTracker';
@@ -83,6 +84,16 @@ export function RecordingArchive({
   const [isBuffering, setIsBuffering] = useState(false);
   const [bufferedProgress, setBufferedProgress] = useState(0);
   const [optimizingId, setOptimizingId] = useState<string | null>(null);
+  const [replayQuality, setReplayQuality] = useState<'proxy' | 'source'>('proxy');
+  const lastPlayedTimeRef = useRef<number>(0);
+
+  const getReplayStreamUrl = (rec: Recording | null, quality: 'proxy' | 'source') => {
+    if (!rec) return '';
+    if (quality === 'source') {
+      return rec.master_stream_url || `${rec.stream_url}?quality=source`;
+    }
+    return rec.stream_url;
+  };
 
   // Markers & chapters state
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
@@ -264,7 +275,9 @@ export function RecordingArchive({
   // Video event handlers
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const cur = videoRef.current.currentTime;
+      setCurrentTime(cur);
+      lastPlayedTimeRef.current = cur;
       const d = videoRef.current.duration;
       if (d && !isNaN(d) && isFinite(d) && d > 0) {
         setDuration(d);
@@ -279,6 +292,9 @@ export function RecordingArchive({
         setDuration(d);
       } else if (selectedRecording?.duration_seconds && selectedRecording.duration_seconds > 0) {
         setDuration(selectedRecording.duration_seconds);
+      }
+      if (lastPlayedTimeRef.current > 0 && lastPlayedTimeRef.current < (videoRef.current.duration || Infinity)) {
+        videoRef.current.currentTime = lastPlayedTimeRef.current;
       }
       setIsBuffering(false);
     }
@@ -543,9 +559,55 @@ export function RecordingArchive({
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
             {selectedRecording && (
               <>
+                {/* Dual-Quality Selector Pill */}
+                <div className="flex items-center bg-background/80 rounded-lg p-0.5 border border-border/80 text-[10px] font-mono">
+                  <button
+                    type="button"
+                    onClick={() => setReplayQuality('proxy')}
+                    className={cn(
+                      "px-2 py-0.5 rounded transition-all font-semibold flex items-center gap-1",
+                      replayQuality === 'proxy'
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="720p ~800kbps faststart web proxy (Saves 85% bandwidth)"
+                  >
+                    <Zap className="w-3 h-3 text-emerald-400" />
+                    <span>720p {selectedRecording.is_optimized ? '(Proxy)' : '(Auto)'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReplayQuality('source')}
+                    className={cn(
+                      "px-2 py-0.5 rounded transition-all font-semibold flex items-center gap-1",
+                      replayQuality === 'source'
+                        ? "bg-primary text-primary-foreground shadow-xs"
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="Full bitrate master source file (for LAN / fiber download)"
+                  >
+                    <HardDrive className="w-3 h-3 text-primary" />
+                    <span>1080p (Source)</span>
+                  </button>
+                </div>
+
+                {isSMOrAdmin && !selectedRecording.is_optimized && (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => handleOptimizeTake(selectedRecording.id)}
+                    disabled={optimizingId === selectedRecording.id}
+                    className="gap-1 text-[11px] border-amber-500/40 text-amber-300 hover:bg-amber-500/10 h-6 px-2"
+                    title="Generate compressed 720p proxy & faststart index"
+                  >
+                    <Sparkles className={cn("w-3 h-3 text-amber-400", optimizingId === selectedRecording.id && "animate-spin")} />
+                    <span>{optimizingId === selectedRecording.id ? "Optimizing..." : "Optimize (720p)"}</span>
+                  </Button>
+                )}
+
                 <Button
                   size="xs"
                   variant="secondary"
@@ -557,7 +619,11 @@ export function RecordingArchive({
                   <span>+ Add Chapter</span>
                 </Button>
                 <span className="text-[11px] font-mono text-muted-foreground">
-                  {formatFileSize(selectedRecording.file_size_bytes)}
+                  {formatFileSize(
+                    replayQuality === 'proxy' && selectedRecording.proxy_size_bytes
+                      ? selectedRecording.proxy_size_bytes
+                      : selectedRecording.file_size_bytes
+                  )}
                 </span>
               </>
             )}
@@ -614,8 +680,8 @@ export function RecordingArchive({
 
               <video
                 ref={videoRef}
-                key={selectedRecording.id}
-                src={getAuthenticatedUrl(selectedRecording.stream_url)}
+                key={`${selectedRecording.id}-${replayQuality}`}
+                src={getAuthenticatedUrl(getReplayStreamUrl(selectedRecording, replayQuality))}
                 playsInline
                 preload="metadata"
                 className="w-full h-full object-contain cursor-pointer"
@@ -1370,6 +1436,12 @@ export function RecordingArchive({
                         )}
                         <span>{rec.status.toUpperCase()}</span>
                       </Badge>
+                      {rec.is_optimized && (
+                        <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold px-1.5 py-0 h-4 flex items-center gap-1 shrink-0">
+                          <Zap className="w-2.5 h-2.5" />
+                          <span>720p OPT</span>
+                        </Badge>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
@@ -1380,9 +1452,9 @@ export function RecordingArchive({
                           onClick={() => handleOptimizeTake(rec.id)}
                           disabled={optimizingId === rec.id}
                           className="h-7 w-7 text-muted-foreground hover:text-primary"
-                          title="Faststart remux & re-index take"
+                          title={rec.is_optimized ? "Re-encode & optimize 720p web proxy" : "Encode 720p web proxy (~85% smaller)"}
                         >
-                          <Sparkles className={`w-3.5 h-3.5 text-primary ${optimizingId === rec.id ? 'animate-spin' : ''}`} />
+                          <Sparkles className={`w-3.5 h-3.5 ${rec.is_optimized ? 'text-emerald-400' : 'text-primary'} ${optimizingId === rec.id ? 'animate-spin' : ''}`} />
                         </Button>
                       )}
                       <Button
@@ -1392,6 +1464,7 @@ export function RecordingArchive({
                           if (isSelected) {
                             togglePlay();
                           } else {
+                            lastPlayedTimeRef.current = 0;
                             setSelectedRecording(rec);
                             setAutoPlayNext(true);
                           }

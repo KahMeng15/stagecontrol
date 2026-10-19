@@ -77,6 +77,19 @@ export function LivePlayer({
   const [showBFrameHint, setShowBFrameHint] = useState(false);
   // User initiated live monitoring playback (prevents auto-play buffering & saves bandwidth)
   const [hasStartedPlayback, setHasStartedPlayback] = useState(false);
+  // Stream Quality: 'auto' (720p on mobile, 1080p on desktop), 'low' (720p @ 800k), 'source' (1080p Master)
+  const [streamQuality, setStreamQuality] = useState<'auto' | 'low' | 'source'>('auto');
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      setIsMobile(mobile);
+      if (mobile) {
+        setStreamQuality('low');
+      }
+    }
+  }, []);
 
   // Live moment markers state
   const [markers, setMarkers] = useState<VideoMarker[]>([]);
@@ -101,6 +114,8 @@ export function LivePlayer({
   const captionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastReadyTimeRef = useRef<string | null>(null);
+  const [incomingBitrateKbps, setIncomingBitrateKbps] = useState<number | null>(null);
+  const lastBytesRef = useRef<{ bytes: number; timestamp: number } | null>(null);
 
   // Poll stream status every 3 seconds
   const fetchStatus = useCallback(async () => {
@@ -108,6 +123,25 @@ export function LivePlayer({
       const status = await api.getStreamStatus(eventId);
       setStreamStatus(status);
       setLoadingStatus(false);
+
+      if (status.bytes_received && status.is_live) {
+        const now = Date.now();
+        if (lastBytesRef.current && lastBytesRef.current.bytes > 0 && status.bytes_received >= lastBytesRef.current.bytes) {
+          const deltaBytes = status.bytes_received - lastBytesRef.current.bytes;
+          const deltaSeconds = (now - lastBytesRef.current.timestamp) / 1000;
+          if (deltaSeconds >= 2) {
+            const kbps = Math.round((deltaBytes * 8) / (deltaSeconds * 1000));
+            setIncomingBitrateKbps(kbps);
+            lastBytesRef.current = { bytes: status.bytes_received, timestamp: now };
+          }
+        } else {
+          lastBytesRef.current = { bytes: status.bytes_received, timestamp: now };
+        }
+      } else if (!status.is_live) {
+        lastBytesRef.current = null;
+        setIncomingBitrateKbps(null);
+      }
+
       if (status.ready_time && lastReadyTimeRef.current && status.ready_time !== lastReadyTimeRef.current) {
         // Stream session restarted/reconnected in MediaMTX: reload iframe to avoid stale HLS 404s
         setReloadKey((k) => k + 1);
@@ -299,17 +333,26 @@ export function LivePlayer({
   };
 
   const isLive = Boolean(streamStatus?.is_live);
+  const effectiveQuality = streamQuality === 'auto' ? (isMobile ? 'low' : 'source') : streamQuality;
 
   // HLS stream URL (direct m3u8) for native <video> element
-  const hlsManifestUrl = isLive && streamStatus?.hls_url
-    ? `${streamStatus.hls_url.replace(/\/$/, '')}/index.m3u8`
+  const hlsManifestUrl = isLive && streamStatus
+    ? effectiveQuality === 'low' && streamStatus.hls_low_playlist_url
+      ? streamStatus.hls_low_playlist_url
+      : effectiveQuality === 'low' && streamStatus.hls_low_url
+        ? `${streamStatus.hls_low_url.replace(/\/$/, '')}/index.m3u8`
+        : streamStatus.hls_playlist_url || `${streamStatus.hls_url.replace(/\/$/, '')}/index.m3u8`
     : null;
 
   // Active stream iframe URL depending on mode (only loaded if user started monitoring)
   const currentStreamUrl = isLive && streamStatus && hasStartedPlayback
     ? playerMode === 'webrtc'
-      ? `${streamStatus.webrtc_url}/?controls=1&autoplay=1&muted=1`
-      : `${streamStatus.hls_url}/?controls=1&autoplay=1&muted=1`
+      ? effectiveQuality === 'low' && streamStatus.webrtc_low_url
+        ? `${streamStatus.webrtc_low_url}/?controls=1&autoplay=1&muted=1`
+        : `${streamStatus.webrtc_url}/?controls=1&autoplay=1&muted=1`
+      : effectiveQuality === 'low' && streamStatus.hls_low_url
+        ? `${streamStatus.hls_low_url}/?controls=1&autoplay=1&muted=1`
+        : `${streamStatus.hls_url}/?controls=1&autoplay=1&muted=1`
     : null;
 
   // Native HLS playback setup with hls.js (only initializes and buffers when user has clicked to play)
@@ -371,7 +414,7 @@ export function LivePlayer({
         hlsRef.current = null;
       }
     };
-  }, [playerMode, isLive, hlsManifestUrl, reloadKey, hasStartedPlayback]);
+  }, [playerMode, isLive, hlsManifestUrl, reloadKey, hasStartedPlayback, streamQuality]);
 
   // Audio ducking & muting for Live Player
   const originalAudioRef = useRef<{ volume: number; muted: boolean } | null>(null);
@@ -471,6 +514,32 @@ export function LivePlayer({
                   <HelpCircle className="w-3.5 h-3.5" />
                 </Button>
               )}
+            </div>
+          )}
+
+          {/* Live Quality Selector Pill */}
+          {isLive && (
+            <div className="flex items-center bg-muted p-0.5 rounded-lg border border-border/50 text-xs">
+              <Button
+                size="xs"
+                variant={effectiveQuality === 'low' ? 'default' : 'ghost'}
+                onClick={() => setStreamQuality('low')}
+                className="gap-1 text-[11px]"
+                title="720p @ 800kbps: Saves 85% bandwidth for 4G, remote, and mobile devices"
+              >
+                <Zap className="w-3 h-3 text-emerald-400" />
+                <span>720p (Low)</span>
+              </Button>
+              <Button
+                size="xs"
+                variant={effectiveQuality === 'source' ? 'default' : 'ghost'}
+                onClick={() => setStreamQuality('source')}
+                className="gap-1 text-[11px]"
+                title="1080p Master Source: Full bitrate feed for fiber/LAN"
+              >
+                <Tv className="w-3 h-3 text-primary" />
+                <span>1080p (Source)</span>
+              </Button>
             </div>
           )}
         </div>
@@ -639,6 +708,38 @@ export function LivePlayer({
           </Button>
         </div>
       </div>
+
+      {/* High Bitrate Advisory Banner (>3,500 kbps) */}
+      {isLive && incomingBitrateKbps !== null && incomingBitrateKbps > 3500 && (
+        <div className="px-4 py-2 bg-amber-950/60 border-b border-amber-500/40 flex flex-wrap items-center justify-between gap-2 text-xs animate-in fade-in duration-200">
+          <div className="flex items-center gap-2 text-amber-300">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+            <span className="text-[11px]">
+              High Bitrate Stream (<strong>{(incomingBitrateKbps / 1000).toFixed(1)} Mbps</strong>) — Remote and mobile viewers may experience buffering. Consider switching OBS to the 720p preset or switching this player to <strong>720p (Low)</strong>.
+            </span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {effectiveQuality === 'source' && (
+              <Button
+                size="xs"
+                variant="secondary"
+                onClick={() => setStreamQuality('low')}
+                className="text-[10px] h-6 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 font-semibold"
+              >
+                Switch Player to 720p
+              </Button>
+            )}
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => setShowBandwidthGuide(true)}
+              className="text-[10px] h-6 border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+            >
+              OBS Preset
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* WebRTC Tips / Notice Banner */}
       {isLive && playerMode === 'webrtc' && showBFrameHint && (

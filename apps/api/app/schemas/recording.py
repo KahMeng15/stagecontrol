@@ -18,6 +18,10 @@ class StreamStatusResponse(BaseModel):
     webrtc_whip_url: Optional[str] = None
     hls_url: str
     hls_playlist_url: str
+    hls_low_url: Optional[str] = None
+    hls_low_playlist_url: Optional[str] = None
+    webrtc_low_url: Optional[str] = None
+    webrtc_low_whep_url: Optional[str] = None
     stream_key: Optional[str] = None
     ready_time: Optional[str] = None
 
@@ -31,7 +35,11 @@ class RecordingResponse(BaseModel):
     status: str
     created_at: datetime
     stream_url: str
+    master_stream_url: Optional[str] = None
     download_url: str
+    proxy_filename: Optional[str] = None
+    proxy_size_bytes: Optional[int] = None
+    is_optimized: Optional[bool] = False
 
     model_config = ConfigDict(from_attributes=True)
 
