@@ -23,12 +23,18 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+# Pre-cache whisper model to eliminate HF Hub rate limits and runtime downloads
+ENV HF_HOME=/app/cache/huggingface \
+    TRANSCRIPTION_MODEL_PATH="/app/cache/models"
+RUN python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8', download_root='/app/cache/models')"
 
 COPY alembic.ini .
 COPY alembic ./alembic

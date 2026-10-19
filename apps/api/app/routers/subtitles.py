@@ -214,3 +214,5 @@ async def subtitle_websocket(
         pass
     finally:
         await transcription_service.unregister_subscriber(actual_event_id, websocket)
+        if event_id != actual_event_id:
+            await transcription_service.unregister_subscriber(event_id, websocket)

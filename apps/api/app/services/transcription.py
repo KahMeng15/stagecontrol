@@ -96,12 +96,22 @@ class TranscriptionService:
                 import os
                 from faster_whisper import WhisperModel
                 cpu_threads = min(4, os.cpu_count() or 4)
-                logger.info(f"Loading speech-to-text model: {settings.TRANSCRIPTION_MODEL} (device=cpu, int8, cpu_threads={cpu_threads})")
+                model_name = settings.TRANSCRIPTION_MODEL
+                download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", "/storage/models")
+                if os.path.exists("/app/cache/models"):
+                    download_root = "/app/cache/models"
+                try:
+                    os.makedirs(download_root, exist_ok=True)
+                except Exception:
+                    pass
+
+                logger.info(f"Loading speech-to-text model: {model_name} (download_root={download_root}, cpu_threads={cpu_threads})")
                 self.model = WhisperModel(
-                    settings.TRANSCRIPTION_MODEL,
+                    model_name,
                     device="cpu",
                     compute_type="int8",
-                    cpu_threads=cpu_threads
+                    cpu_threads=cpu_threads,
+                    download_root=download_root
                 )
                 logger.info("Speech-to-text model loaded successfully.")
             except Exception as e:
@@ -275,7 +285,7 @@ class TranscriptionService:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.DEVNULL
             )
             self.active_processes[event_id] = proc
 
@@ -544,6 +554,11 @@ class TranscriptionService:
                 if matched_block:
                     event_active_blocks[event_id] = matched_block.id
                     event_last_script_match_time[event_id] = now
+                    ev = db.query(Event).filter(Event.id == event_id).first()
+                    if ev and ev.slug:
+                        event_active_blocks[ev.slug] = matched_block.id
+                        event_last_script_match_time[ev.slug] = now
+
                     sync_payload = {
                         "type": "script_sync",
                         "event_id": event_id,
@@ -558,6 +573,8 @@ class TranscriptionService:
                         "is_music": is_music,
                     }
                     await self.broadcast_subtitle(event_id, sync_payload)
+                    if ev and ev.slug:
+                        await self.broadcast_subtitle(ev.slug, sync_payload)
                     logger.info(f"[{event_id[:8]}] Script Auto-Synced to line {matched_block.order_index} ({matched_block.speaker}): {matched_block.dialogue[:50]}... (conf: {confidence:.2f})")
             finally:
                 db.close()

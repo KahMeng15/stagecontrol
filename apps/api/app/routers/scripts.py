@@ -30,15 +30,21 @@ router = APIRouter(prefix="/events/{event_id}/script", tags=["scripts"])
 event_active_blocks: dict[str, str] = {}
 event_last_script_match_time: dict[str, float] = {}
 
-def get_event_membership(db: Session, event_id: str, user: User) -> Optional[Membership]:
+def resolve_event_and_membership(db: Session, event_id: str, user: User) -> tuple[Event, Membership]:
+    event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
     if user.is_superadmin:
-        return Membership(user_id=user.id, event_id=event_id, role=EventRole.ADMIN)
+        return event, Membership(user_id=user.id, event_id=event.id, role=EventRole.ADMIN)
     if user.id.startswith("guest_"):
-        return Membership(user_id=user.id, event_id=event_id, role=EventRole.VIEWER)
-    return db.query(Membership).filter(
-        Membership.event_id == event_id,
+        return event, Membership(user_id=user.id, event_id=event.id, role=EventRole.VIEWER)
+    membership = db.query(Membership).filter(
+        Membership.event_id == event.id,
         Membership.user_id == user.id
     ).first()
+    if not membership:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+    return event, membership
 
 @router.get("", response_model=Optional[ScriptResponse])
 def get_event_script(
@@ -47,14 +53,8 @@ def get_event_script(
     current_user: User = Depends(get_current_user)
 ):
     """Fetches the active script for this event along with its sections and blocks."""
-    event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event, _ = resolve_event_and_membership(db, event_id, current_user)
     actual_event_id = event.id
-
-    membership = get_event_membership(db, actual_event_id, current_user)
-    if not membership:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     script = db.query(Script).filter(
         Script.event_id == actual_event_id,
@@ -90,9 +90,10 @@ async def upload_script_file(
     current_user: User = Depends(get_current_user)
 ):
     """Uploads a .docx or text script file, parses columns (Speaker, Cues, Dialogue), and replaces active script."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
     content = await file.read()
     filename = file.filename or "script.docx"
@@ -109,7 +110,11 @@ async def upload_script_file(
         logger.error(f"Failed to parse uploaded script {filename}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Failed to parse document: {str(e)}")
 
-    return _persist_parsed_script(db, event_id, parsed_data)
+    res = _persist_parsed_script(db, actual_event_id, parsed_data)
+    await transcription_service.broadcast_subtitle(actual_event_id, {"type": "script_updated", "event_id": actual_event_id})
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, {"type": "script_updated", "event_id": event_id})
+    return res
 
 @router.post("/import-text", response_model=ScriptResponse)
 def import_script_text(
@@ -119,15 +124,25 @@ def import_script_text(
     current_user: User = Depends(get_current_user)
 ):
     """Imports raw text (table-pasted, dialogue lines, or TSV) into structured script."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
     if not payload.text.strip():
         raise HTTPException(status_code=400, detail="Script text cannot be empty")
 
     parsed_data = parse_raw_text(payload.text, default_title=payload.title or "Imported Script")
-    return _persist_parsed_script(db, event_id, parsed_data)
+    res = _persist_parsed_script(db, actual_event_id, parsed_data)
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(transcription_service.broadcast_subtitle(actual_event_id, {"type": "script_updated", "event_id": actual_event_id}))
+        if event_id != actual_event_id:
+            loop.create_task(transcription_service.broadcast_subtitle(event_id, {"type": "script_updated", "event_id": event_id}))
+    except RuntimeError:
+        pass
+    return res
 
 @router.post("/jump")
 async def jump_script_block(
@@ -137,14 +152,10 @@ async def jump_script_block(
     current_user: User = Depends(get_current_user)
 ):
     """Manual jump: sets the active script block and broadcasts to all connected viewers and crew."""
-    event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    actual_event_id = event.id
-
-    membership = get_event_membership(db, actual_event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.CREW):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.CREW):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Crew, Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
     block = db.query(ScriptBlock).filter(ScriptBlock.id == payload.block_id).first()
     if not block:
@@ -181,22 +192,30 @@ async def delete_event_script(
     current_user: User = Depends(get_current_user)
 ):
     """Deletes the active script for this event."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
-    scripts = db.query(Script).filter(Script.event_id == event_id).all()
+    scripts = db.query(Script).filter(Script.event_id == actual_event_id).all()
     for s in scripts:
         db.delete(s)
     db.commit()
 
+    event_active_blocks.pop(actual_event_id, None)
     event_active_blocks.pop(event_id, None)
+    event_last_script_match_time.pop(actual_event_id, None)
     event_last_script_match_time.pop(event_id, None)
 
-    await transcription_service.broadcast_subtitle(event_id, {
+    await transcription_service.broadcast_subtitle(actual_event_id, {
         "type": "script_deleted",
-        "event_id": event_id
+        "event_id": actual_event_id
     })
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, {
+            "type": "script_deleted",
+            "event_id": event_id
+        })
 
     return {"status": "ok", "message": "Script removed"}
 
@@ -208,12 +227,13 @@ async def toggle_block_performance(
     current_user: User = Depends(get_current_user)
 ):
     """Toggles persistent performance/musical act state for a script line."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
     block = db.query(ScriptBlock).join(ScriptSection).join(Script).filter(
-        Script.event_id == event_id,
+        Script.event_id == actual_event_id,
         ScriptBlock.id == block_id
     ).first()
     if not block:
@@ -224,12 +244,15 @@ async def toggle_block_performance(
     db.refresh(block)
 
     # Broadcast update so all live viewers immediately reflect the persistent performance state
-    await transcription_service.broadcast_subtitle(event_id, {
+    update_msg = {
         "type": "script_updated",
-        "event_id": event_id,
+        "event_id": actual_event_id,
         "block_id": block.id,
         "is_performance": block.is_performance
-    })
+    }
+    await transcription_service.broadcast_subtitle(actual_event_id, update_msg)
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, update_msg)
 
     return block
 
@@ -242,12 +265,13 @@ async def update_script_block(
     current_user: User = Depends(get_current_user)
 ):
     """Updates fields (including is_performance) on a script block."""
-    membership = get_event_membership(db, event_id, current_user)
-    if not membership or not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.STAGE_MANAGER):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Stage Manager or Admin permissions required")
+    actual_event_id = event.id
 
     block = db.query(ScriptBlock).join(ScriptSection).join(Script).filter(
-        Script.event_id == event_id,
+        Script.event_id == actual_event_id,
         ScriptBlock.id == block_id
     ).first()
     if not block:
@@ -267,12 +291,15 @@ async def update_script_block(
     db.commit()
     db.refresh(block)
 
-    await transcription_service.broadcast_subtitle(event_id, {
+    update_msg = {
         "type": "script_updated",
-        "event_id": event_id,
+        "event_id": actual_event_id,
         "block_id": block.id,
         "is_performance": block.is_performance
-    })
+    }
+    await transcription_service.broadcast_subtitle(actual_event_id, update_msg)
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, update_msg)
 
     return block
 
