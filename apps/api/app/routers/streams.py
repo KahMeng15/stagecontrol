@@ -40,7 +40,11 @@ def get_effective_domain(request: Request, db: Session) -> str:
     sys_settings = db.query(SystemSettings).first()
     if sys_settings and sys_settings.primary_domain:
         # If user is accessing from alternative/local domain and it's configured
-        req_host = request.headers.get("host", "").lower()
+        req_host = (
+            request.headers.get("x-forwarded-host")
+            or request.headers.get("host")
+            or ""
+        ).lower()
         if (
             sys_settings.alternative_domain
             and sys_settings.alternative_domain.lower() in req_host
@@ -56,7 +60,13 @@ def get_effective_domain(request: Request, db: Session) -> str:
         return domain
 
     # Fallback to current request hostname
-    host = request.url.hostname or "localhost"
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.hostname
+        or "localhost"
+    )
+    host = host.split(":")[0]
     return f"http://{host}"
 
 @router.get("/stream-status", response_model=StreamStatusResponse)
@@ -103,17 +113,21 @@ async def get_stream_status(
         ready = False
 
     base_domain = get_effective_domain(request, db)
-    # Extract hostname without protocol/port for RTMP
-    raw_host = request.url.hostname or "localhost"
+    # Extract client-facing hostname for RTMP, HLS, WebRTC
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(base_domain)
+        effective_host = parsed.hostname or base_domain.replace("http://", "").replace("https://", "").split(":")[0].split("/")[0] or "localhost"
+    except Exception:
+        effective_host = request.url.hostname or "localhost"
 
     # Port mappings
-    # In production with reverse proxy, paths might be proxied; for local/dev ports are 1935, 8888, 8889
-    rtmp_url = f"rtmp://{raw_host}:1935/live"
-    webrtc_url = f"http://{raw_host}:8889/live/{stream_key}"
-    webrtc_whep_url = f"http://{raw_host}:8889/live/{stream_key}/whep"
-    webrtc_whip_url = f"http://{raw_host}:8889/live/{stream_key}/whip"
-    hls_url = f"http://{raw_host}:8888/live/{stream_key}"
-    hls_playlist_url = f"http://{raw_host}:8888/live/{stream_key}/index.m3u8"
+    rtmp_url = f"rtmp://{effective_host}:1935/live"
+    webrtc_url = f"http://{effective_host}:8889/live/{stream_key}"
+    webrtc_whep_url = f"http://{effective_host}:8889/live/{stream_key}/whep"
+    webrtc_whip_url = f"http://{effective_host}:8889/live/{stream_key}/whip"
+    hls_url = f"http://{effective_host}:8888/live/{stream_key}"
+    hls_playlist_url = f"http://{effective_host}:8888/live/{stream_key}/index.m3u8"
 
     can_view_key = has_sufficient_role(membership.role, EventRole.STAGE_MANAGER)
 

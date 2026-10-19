@@ -255,6 +255,25 @@ function EventContent() {
     return typeof window !== 'undefined' ? window.location.origin : '';
   };
 
+  const getRtmpUrl = () => {
+    const baseUrl = getActiveBaseUrl();
+    let hostname = 'localhost';
+    try {
+      if (baseUrl.startsWith('http://') || baseUrl.startsWith('https://')) {
+        hostname = new URL(baseUrl).hostname;
+      } else if (baseUrl) {
+        hostname = baseUrl.split(':')[0].replace(/\/.*$/, '');
+      } else if (typeof window !== 'undefined') {
+        hostname = window.location.hostname;
+      }
+    } catch {
+      if (typeof window !== 'undefined') {
+        hostname = window.location.hostname;
+      }
+    }
+    return `rtmp://${hostname}:1935/live`;
+  };
+
   const handleCopyPublicLink = () => {
     if (event?.public_pin) {
       const url = `${getActiveBaseUrl()}/view/${event.public_pin}`;
@@ -660,14 +679,14 @@ function EventContent() {
                         <Input
                           type="text"
                           readOnly
-                          value="rtmp://localhost:1935/live"
+                          value={getRtmpUrl()}
                           className="font-mono text-xs"
                         />
                         <Button
                           type="button"
                           variant="secondary"
                           onClick={() => {
-                            copyToClipboard('rtmp://localhost:1935/live');
+                            copyToClipboard(getRtmpUrl());
                             toast.success('RTMP server URL copied');
                           }}
                           className="gap-1.5 shrink-0"
