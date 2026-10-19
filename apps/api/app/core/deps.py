@@ -44,11 +44,16 @@ def get_current_user(
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc)
         guest_sub = payload["sub"]
-        guest_name = payload.get("guest_name", "Guest Viewer")
+        raw_name = (payload.get("guest_name") or "").strip()
+        guest_name = raw_name if len(raw_name) >= 3 else f"Guest {raw_name}".strip()
+        if len(guest_name) < 3:
+            guest_name = "Guest Viewer"
+        guest_name = guest_name[:50]
+        clean_guest_id = guest_sub.replace("-", "").replace("_", "")
         return User(
             id=guest_sub,
             username=guest_name,
-            email=f"{guest_sub}@guest.local",
+            email=f"guest_{clean_guest_id[:16]}@example.com",
             full_name=guest_name,
             is_active=True,
             is_superadmin=False,
