@@ -556,6 +556,14 @@ export function getWebSocketUrl(path: string): string {
   const queryPrefix = cleanPath.includes('?') ? '&' : '?';
   const tokenQuery = token ? `${queryPrefix}token=${encodeURIComponent(token)}` : '';
 
+  const envWs = process.env.NEXT_PUBLIC_WS_URL;
+  if (envWs && (envWs.startsWith('ws://') || envWs.startsWith('wss://'))) {
+    try {
+      const u = new URL(envWs);
+      return `${u.protocol}//${u.host}${cleanPath}${tokenQuery}`;
+    } catch {}
+  }
+
   const envUrl = process.env.NEXT_PUBLIC_API_URL;
   if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost')) {
     try {
@@ -567,8 +575,16 @@ export function getWebSocketUrl(path: string): string {
 
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.hostname;
-  const isLocalDev = (host === 'localhost' || host === '127.0.0.1') && window.location.port === '3000';
-  const port = isLocalDev ? ':8000' : (window.location.port ? `:${window.location.port}` : '');
+
+  if ((host === 'localhost' || host === '127.0.0.1') && window.location.port === '3000') {
+    return `${wsProtocol}//${host}:8000${cleanPath}${tokenQuery}`;
+  }
+
+  if (window.location.port === '1550') {
+    return `${wsProtocol}//${host}:1551${cleanPath}${tokenQuery}`;
+  }
+
+  const port = window.location.port ? `:${window.location.port}` : '';
   return `${wsProtocol}//${host}${port}${cleanPath}${tokenQuery}`;
 }
 

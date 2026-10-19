@@ -17,6 +17,7 @@ import { WalkieCall, api, getAudioMediaUrl } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RoleBadge } from '@/components/RoleBadge';
+import { copyToClipboard } from '@/lib/utils';
 
 interface WalkieCallCardProps {
   call: WalkieCall;
@@ -90,7 +91,7 @@ export function WalkieCallCard({ call, canManage, onDelete }: WalkieCallCardProp
 
   const handleCopyTranscription = () => {
     if (!call.transcription) return;
-    navigator.clipboard.writeText(call.transcription);
+    copyToClipboard(call.transcription);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

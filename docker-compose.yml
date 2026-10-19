@@ -5,7 +5,7 @@ services:
     container_name: stagecontrol-api
     restart: unless-stopped
     ports:
-      - "127.0.0.1:1551:8000"
+      - "1551:8000"
     environment:
       - DATABASE_URL=sqlite:////storage/db/stageflow.db
       - SECRET_KEY=stagecontrol-super-secure-dev-secret-key-change-in-prod-2026

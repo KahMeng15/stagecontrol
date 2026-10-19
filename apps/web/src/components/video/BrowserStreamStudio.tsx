@@ -23,6 +23,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { copyToClipboard } from '@/lib/utils';
 import { toast } from 'sonner';
 import { QRCodeDisplay } from './QRCodeDisplay';
 import {
@@ -110,7 +111,7 @@ export function BrowserStreamStudio({
 
   const handleCopyMobileLink = () => {
     if (!mobileUrl) return;
-    navigator.clipboard.writeText(mobileUrl);
+    copyToClipboard(mobileUrl);
     setCopiedLink(true);
     toast.success('Mobile broadcast link copied to clipboard');
     setTimeout(() => setCopiedLink(false), 2000);

@@ -6,6 +6,7 @@ import { useAuth } from '@/context/AuthContext';
 import { api, EventDetail, EventRole, EventStatus, SystemSettings } from '@/lib/api';
 import { Navbar } from '@/components/Navbar';
 import { RoleBadge } from '@/components/RoleBadge';
+import { copyToClipboard } from '@/lib/utils';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
 import { BrowserStreamStudio } from '@/components/video/BrowserStreamStudio';
@@ -173,7 +174,7 @@ function EventContent() {
 
   const handleCopyStreamKey = () => {
     if (event?.stream_key) {
-      navigator.clipboard.writeText(event.stream_key);
+      copyToClipboard(event.stream_key);
       setCopiedKey(true);
       toast.success('Stream key copied to clipboard');
       setTimeout(() => setCopiedKey(false), 2000);
@@ -257,7 +258,7 @@ function EventContent() {
   const handleCopyPublicLink = () => {
     if (event?.public_pin) {
       const url = `${getActiveBaseUrl()}/view/${event.public_pin}`;
-      navigator.clipboard.writeText(url);
+      copyToClipboard(url);
       setCopiedPinLink(true);
       toast.success('Public audience link copied to clipboard');
       setTimeout(() => setCopiedPinLink(false), 2000);
@@ -666,7 +667,7 @@ function EventContent() {
                           type="button"
                           variant="secondary"
                           onClick={() => {
-                            navigator.clipboard.writeText('rtmp://localhost:1935/live');
+                            copyToClipboard('rtmp://localhost:1935/live');
                             toast.success('RTMP server URL copied');
                           }}
                           className="gap-1.5 shrink-0"
@@ -768,7 +769,7 @@ Audio: 64 Kbps AAC
 Keyframe Interval: 2s
 Max B-frames: 0
 Tune: zerolatency`;
-                              navigator.clipboard.writeText(config);
+                              copyToClipboard(config);
                               toast.success('4G 500kbps OBS preset copied!');
                             }}
                             className="w-full gap-1.5 text-xs font-semibold"
@@ -810,7 +811,7 @@ Audio: 128 Kbps AAC
 Keyframe Interval: 2s
 Max B-frames: 0
 Tune: zerolatency`;
-                              navigator.clipboard.writeText(config);
+                              copyToClipboard(config);
                               toast.success('1080p OBS preset copied!');
                             }}
                             className="w-full gap-1.5 text-xs"

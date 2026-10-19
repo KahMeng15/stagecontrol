@@ -43,6 +43,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { copyToClipboard } from '@/lib/utils';
 
 interface LivePlayerProps {
   eventId: string;
@@ -292,7 +293,7 @@ export function LivePlayer({
 
   const handleCopyRtmp = () => {
     if (!streamStatus) return;
-    navigator.clipboard.writeText(streamStatus.rtmp_url);
+    copyToClipboard(streamStatus.rtmp_url);
     setCopiedRtmp(true);
     setTimeout(() => setCopiedRtmp(false), 2000);
   };
@@ -1210,7 +1211,7 @@ export function LivePlayer({
 • Tune: zerolatency
 • Max B-frames: 0
 • Audio Bitrate: 64 Kbps AAC`;
-                navigator.clipboard.writeText(obsConfig);
+                copyToClipboard(obsConfig);
                 toast.success('OBS 500kbps 720p preset copied to clipboard');
               }}
               className="gap-1.5 text-xs"
