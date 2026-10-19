@@ -280,9 +280,6 @@ function EventContent() {
       }
     }
 
-    if (isHttps || isDomain) {
-      return `rtmp://${hostname}:443/live`;
-    }
     return `rtmp://${hostname}:1935/live`;
   };
 
