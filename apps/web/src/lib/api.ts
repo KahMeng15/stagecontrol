@@ -390,6 +390,11 @@ export const api = {
       method: 'POST',
     }),
 
+  postProcessRecordings: (eventId: string) =>
+    request<{ status: string; message: string }>(`/events/${eventId}/recordings/post-process`, {
+      method: 'POST',
+    }),
+
   // Video Timeline Chapters & Markers
   listMarkers: (eventId: string, recordingId?: string) =>
     request<VideoMarker[]>(`/events/${eventId}/markers${recordingId ? `?recording_id=${recordingId}` : ''}`),

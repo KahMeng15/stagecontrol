@@ -647,6 +647,45 @@ export function RecordingArchive({
 
         <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden group">
           {selectedRecording ? (
+            selectedRecording.status === 'failed' ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/95 border border-red-500/30 z-20">
+                <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 mb-3 shadow-xl shadow-red-500/10">
+                  <AlertCircle className="w-7 h-7" />
+                </div>
+                <h4 className="text-base font-bold text-red-200">Corrupted Stream Take (Quarantined)</h4>
+                <p className="text-xs text-slate-400 max-w-md mt-1.5 leading-relaxed">
+                  This take experienced severe upstream packet loss or uninitialized buffer wipeouts during live ingest.
+                  Browser playback is quarantined to prevent decoder crashes.
+                </p>
+                <div className="flex items-center gap-3 mt-5 flex-wrap justify-center">
+                  {isSMOrAdmin && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => handleOptimizeTake(selectedRecording.id)}
+                      disabled={optimizingId === selectedRecording.id}
+                      className="gap-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-400/30 text-xs font-semibold"
+                    >
+                      <Sparkles className={cn("w-3.5 h-3.5 text-amber-400", optimizingId === selectedRecording.id && "animate-spin")} />
+                      <span>{optimizingId === selectedRecording.id ? "Attempting Salvage..." : "Auto-Salvage Stream"}</span>
+                    </Button>
+                  )}
+                  {selectedRecording.download_url && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      asChild
+                      className="gap-2 text-xs"
+                    >
+                      <a href={getAuthenticatedUrl(selectedRecording.download_url)} download>
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Download Raw Master ({formatFileSize(selectedRecording.file_size_bytes)})</span>
+                      </a>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
             <>
               {videoError && (
                 <div className="absolute top-4 left-4 right-4 bg-red-950/90 border border-red-500/50 text-red-200 text-xs p-3 rounded-xl flex items-center justify-between z-25 shadow-2xl backdrop-blur-md">
@@ -979,6 +1018,7 @@ export function RecordingArchive({
                 </div>
               </div>
             </>
+            )
           ) : (
             <div className="flex flex-col items-center justify-center p-8 text-center text-slate-500">
               <Film className="w-12 h-12 mb-3 text-slate-600" />
@@ -1349,16 +1389,21 @@ export function RecordingArchive({
                       variant={isSelected ? "default" : "secondary"}
                       onClick={() => {
                         if (isSelected) {
-                          togglePlay();
+                          if (rec.status !== 'failed') togglePlay();
                         } else {
                           setSelectedRecording(rec);
-                          setAutoPlayNext(true);
+                          setAutoPlayNext(rec.status !== 'failed');
                         }
                       }}
-                      className="h-7 w-7 shrink-0"
-                      title={isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take'}
+                      className={cn(
+                        "h-7 w-7 shrink-0",
+                        rec.status === 'failed' && "border-red-500/40 text-red-400 hover:bg-red-500/10"
+                      )}
+                      title={rec.status === 'failed' ? 'Corrupted take (quarantined)' : (isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take')}
                     >
-                      {isSelected && isPlaying ? (
+                      {rec.status === 'failed' ? (
+                        <AlertCircle className="w-3 h-3 text-red-400" />
+                      ) : isSelected && isPlaying ? (
                         <Pause className="w-3 h-3" />
                       ) : (
                         <Play className="w-3 h-3 fill-current" />
@@ -1460,13 +1505,17 @@ export function RecordingArchive({
                         variant={rec.status === 'ready' ? 'secondary' : rec.status === 'recording' ? 'destructive' : 'outline'}
                         className={cn(
                           "text-[9px] font-mono uppercase px-1.5 py-0 h-4 shrink-0 flex items-center gap-1",
-                          rec.status === 'recording' && "bg-red-500/20 text-red-400 border-red-500/30"
+                          rec.status === 'recording' && "bg-red-500/20 text-red-400 border-red-500/30",
+                          rec.status === 'failed' && "bg-red-950/80 text-red-300 border-red-500/40 font-bold"
                         )}
                       >
                         {rec.status === 'recording' && (
                           <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />
                         )}
-                        <span>{rec.status.toUpperCase()}</span>
+                        {rec.status === 'failed' && (
+                          <AlertCircle className="w-2.5 h-2.5 text-red-400" />
+                        )}
+                        <span>{rec.status === 'failed' ? 'CORRUPT' : rec.status.toUpperCase()}</span>
                       </Badge>
                       {rec.is_optimized && (
                         <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold px-1.5 py-0 h-4 flex items-center gap-1 shrink-0">

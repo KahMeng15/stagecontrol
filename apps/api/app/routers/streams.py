@@ -3,7 +3,7 @@ import httpx
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 
@@ -32,6 +32,7 @@ from app.services.video_processor import (
 )
 
 router = APIRouter(prefix="/events/{event_id}", tags=["Live Streams & Video Playback"])
+webhook_router = APIRouter(prefix="/events", tags=["MediaMTX Stream Webhooks"])
 
 def get_effective_domain(request: Request, db: Session) -> str:
     """
@@ -335,14 +336,25 @@ def list_event_recordings(
                 duration = max(0.0, (now_utc - start_dt).total_seconds())
             else:
                 # File is settled on disk
-                rec_status = "ready"
-                if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
-                    from app.services.video_processor import repair_corrupted_mvhd
-                    repair_corrupted_mvhd(file)
-                    meta = probe_video_metadata(file)
-                    duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
-                else:
+                if existing and existing.status == "failed":
+                    rec_status = "failed"
                     duration = existing.duration_seconds
+                else:
+                    rec_status = "ready"
+                    if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
+                        from app.services.video_processor import repair_corrupted_mvhd, check_video_stream_integrity
+                        repair_corrupted_mvhd(file)
+                        integrity = check_video_stream_integrity(file)
+                        if integrity.get("status") == "severe_corruption":
+                            rec_status = "failed"
+                            if "(Corrupted stream)" not in friendly_title:
+                                friendly_title = f"{friendly_title} (Corrupted stream)"
+                            duration = 0.0
+                        else:
+                            meta = probe_video_metadata(file)
+                            duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
+                    else:
+                        duration = existing.duration_seconds
 
             # Check if an optimized 720p proxy exists on disk
             proxy_file = file.with_name(f"{file.stem}_720p.mp4")
@@ -485,6 +497,16 @@ def stream_recording_video(
             detail="Recording media file missing from disk"
         )
 
+    # Protect browser decoders from attempting to demux irrecoverable 0xFF / corrupt streams
+    if recording.status == "failed" and quality not in ("source", "master"):
+        from app.services.video_processor import check_video_stream_integrity
+        integrity = check_video_stream_integrity(file_path)
+        if integrity.get("status") == "severe_corruption":
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail="This recording was flagged as corrupted due to packet loss during live ingest. Use Auto-Fix or Master Download."
+            )
+
     # Determine whether to serve 720p proxy (default for low bandwidth) or master
     target_path = file_path
     if quality not in ("source", "master") and recording.proxy_filename:
@@ -545,34 +567,10 @@ def optimize_single_recording(
             detail="Recording media file missing from disk"
         )
 
-    from app.services.video_processor import repair_corrupted_mvhd
-    repair_corrupted_mvhd(file_path)
-
-    if is_fragmented_mp4(file_path):
-        success, exact_dur, new_size = remux_to_faststart_mp4(file_path)
-        if success:
-            recording.duration_seconds = round(exact_dur, 1)
-            recording.file_size_bytes = new_size
-            recording.status = "ready"
-    else:
-        meta = probe_video_metadata(file_path)
-        if meta.get("duration"):
-            recording.duration_seconds = round(meta["duration"], 1)
-        recording.file_size_bytes = file_path.stat().st_size
-        recording.status = "ready"
-
-    # Generate 720p 800k faststart web proxy
-    from app.services.video_processor import generate_compressed_proxy
-    proxy_success, proxy_path, proxy_size = generate_compressed_proxy(file_path)
-    if proxy_success and proxy_path:
-        parts = recording.filename.split("/")
-        stream_key = parts[1] if len(parts) > 1 else event.stream_key
-        recording.proxy_filename = f"live/{stream_key}/{proxy_path.name}"
-        recording.proxy_size_bytes = proxy_size
-        recording.is_optimized = 1
-
-    db.commit()
+    from app.services.video_processor import post_process_recording_pipeline
+    post_process_recording_pipeline(file_path, event.id, event.stream_key)
     db.refresh(recording)
+
     return RecordingResponse(
         id=recording.id,
         event_id=recording.event_id,
@@ -589,6 +587,38 @@ def optimize_single_recording(
         proxy_size_bytes=recording.proxy_size_bytes,
         is_optimized=bool(recording.is_optimized)
     )
+
+@router.post("/recordings/post-process")
+async def trigger_event_recordings_post_process(
+    event_id: str,
+    background_tasks: BackgroundTasks,
+    event_and_member: tuple[Event, Membership] = Depends(require_event_access),
+):
+    """
+    Manually triggers the full post-processing & quarantine pipeline for all takes in this event.
+    """
+    event, _ = event_and_member
+    from app.services.video_processor import post_process_all_event_recordings
+    background_tasks.add_task(post_process_all_event_recordings, event.id)
+    return {"status": "accepted", "event_id": event.id, "message": "Post-processing pipeline scheduled in background"}
+
+@webhook_router.post("/by-stream-key/{stream_key}/post-process-recordings")
+async def trigger_post_process_by_stream_key(
+    stream_key: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Webhook called by MediaMTX runOnUnPublish when an OBS broadcast finishes.
+    Schedules post_process_all_event_recordings in the background.
+    """
+    event = db.query(Event).filter(Event.stream_key == stream_key).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event with stream key not found")
+
+    from app.services.video_processor import post_process_all_event_recordings
+    background_tasks.add_task(post_process_all_event_recordings, event.id)
+    return {"status": "accepted", "event_id": event.id, "message": "Post-processing pipeline scheduled in background"}
 
 @router.get("/recordings/{recording_id}/download")
 def download_recording_video(

@@ -284,3 +284,87 @@ def test_whip_endpoints(client, test_db):
             headers=headers
         )
         assert del_resp.status_code == 200
+
+def test_recording_corruption_handling_and_webhooks(client, test_db, tmp_path):
+    """Test video integrity check, corrupt recording quarantine (415 error), and post-processing webhooks."""
+    from app.services.video_processor import check_video_stream_integrity
+
+    user = User(
+        username="stream_guard",
+        email="stream_guard@stageflow.io",
+        hashed_password=hash_password("adminpass123"),
+        is_superadmin=True
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    token = create_access_token(user.id, extra_claims={"sub": user.id, "email": user.email, "role": "admin"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    event = Event(
+        name="Integrity Check Test Event",
+        slug="integrity-check-event",
+        created_by_id=user.id,
+        stream_key="corrupt-test-key-999"
+    )
+    test_db.add(event)
+    test_db.commit()
+
+    membership = Membership(
+        user_id=user.id,
+        event_id=event.id,
+        role=EventRole.ADMIN.value,
+        callsign="Inspector"
+    )
+    test_db.add(membership)
+    test_db.commit()
+
+    # 1. Test check_video_stream_integrity with synthetic 0xFF corrupted file
+    corrupt_file = tmp_path / "corrupt_take.mp4"
+    corrupt_file.write_bytes(b"\xff" * 60000)
+
+    report = check_video_stream_integrity(corrupt_file)
+    assert report["is_corrupted"] is True
+    assert report["status"] == "severe_corruption"
+    assert report["ff_ratio"] > 0.9
+
+    # 2. Test MediaMTX webhook triggers post-processing by stream_key
+    webhook_resp = client.post(f"/api/events/by-stream-key/{event.stream_key}/post-process-recordings")
+    assert webhook_resp.status_code == 200
+    assert webhook_resp.json()["status"] == "accepted"
+    assert webhook_resp.json()["event_id"] == event.id
+
+    # Non-existent stream key should return 404
+    missing_webhook = client.post("/api/events/by-stream-key/non-existent-key/post-process-recordings")
+    assert missing_webhook.status_code == 404
+
+    # 3. Test manual post-process endpoint
+    manual_post_resp = client.post(f"/api/events/{event.id}/recordings/post-process", headers=headers)
+    assert manual_post_resp.status_code == 200
+    assert manual_post_resp.json()["status"] == "accepted"
+
+    # 4. Test corrupted recording playback guard (HTTP 415 response)
+    event_rec_dir = RECORDINGS_DIR / "live" / event.stream_key
+    event_rec_dir.mkdir(parents=True, exist_ok=True)
+    corrupted_mp4 = event_rec_dir / "corrupted_take.mp4"
+    corrupted_mp4.write_bytes(b"\xff" * 60000)
+
+    corrupted_recording = Recording(
+        event_id=event.id,
+        filename=f"live/{event.stream_key}/corrupted_take.mp4",
+        file_size_bytes=corrupted_mp4.stat().st_size,
+        duration_seconds=120.0,
+        status="failed",
+        title="Corrupted Take (0xFF wipeout)"
+    )
+    test_db.add(corrupted_recording)
+    test_db.commit()
+
+    stream_resp = client.get(f"/api/events/{event.id}/recordings/{corrupted_recording.id}/stream", headers=headers)
+    assert stream_resp.status_code == 415
+    assert "flagged as corrupted" in stream_resp.json()["detail"]
+
+    # Clean up mock directory
+    if event_rec_dir.exists():
+        shutil.rmtree(event_rec_dir, ignore_errors=True)
+

@@ -50,7 +50,7 @@ services:
     command: ["npm", "run", "dev", "--", "-H", "0.0.0.0"]
 
   mediamtx:
-    image: bluenviron/mediamtx:latest
+    image: bluenviron/mediamtx:latest-ffmpeg
     container_name: stagecontrol-mediamtx-dev
     restart: unless-stopped
     ports:

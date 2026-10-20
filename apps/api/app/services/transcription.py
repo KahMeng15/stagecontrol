@@ -627,6 +627,11 @@ class TranscriptionService:
                                     if running_id not in active_event_ids:
                                         logger.info(f"Stream stopped for event {running_id}. Cleaning up transcription worker.")
                                         await self.stop_event_transcription(running_id)
+                                        try:
+                                            from app.services.video_processor import post_process_all_event_recordings
+                                            asyncio.create_task(asyncio.to_thread(post_process_all_event_recordings, running_id))
+                                        except Exception as pp_err:
+                                            logger.warning(f"Failed to schedule post-processing for event {running_id}: {pp_err}")
                             finally:
                                 db.close()
             except Exception as e:
