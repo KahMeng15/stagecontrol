@@ -609,7 +609,7 @@ async def trigger_post_process_by_stream_key(
     db: Session = Depends(get_db)
 ):
     """
-    Webhook called by MediaMTX runOnUnPublish when an OBS broadcast finishes.
+    Webhook called by MediaMTX runOnOffline or runOnRecordSegmentComplete when an OBS broadcast finishes or segment closes.
     Schedules post_process_all_event_recordings in the background.
     """
     event = db.query(Event).filter(Event.stream_key == stream_key).first()

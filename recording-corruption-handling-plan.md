@@ -68,7 +68,7 @@ To prevent corrupted takes from ever stalling the UI or disrupting users in futu
 ### Phase 1: Automated Stream End Hook (MediaMTX)
 
 In `services/mediamtx/mediamtx.yml`:
-- Added a `runOnUnPublish` hook that notifies FastAPI immediately when an OBS broadcast finishes.
+- Added `runOnOffline` and `runOnRecordSegmentComplete` hooks that notify FastAPI immediately when an OBS broadcast finishes or a segment finalizes.
 - MediaMTX stream monitor in FastAPI also detects stream publication ends and triggers post-processing.
 - FastAPI schedules a background worker task (`post_process_recording_task`).
 

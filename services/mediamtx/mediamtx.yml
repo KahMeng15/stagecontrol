@@ -77,14 +77,13 @@ paths:
       -f flv rtmp://localhost:1935/live/${key}_low
     runOnAvailableRestart: yes
 
-    # Phase 1: Automated stream end hook (notifies FastAPI when OBS publisher disconnects)
-    runOnUnPublish: >
-      sh -c 'curl -s -X POST http://api:8000/api/events/by-stream-key/$key/post-process-recordings || wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$key/post-process-recordings || true'
-    runOnUnPublishRestart: no
+    # Phase 1: Automated stream end hook (notifies FastAPI when publisher disconnects)
+    runOnOffline: >
+      sh -c 'KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
 
     # Triggers pipeline when recorded segment file is finalized and closed on disk
     runOnRecordSegmentComplete: >
-      sh -c 'curl -s -X POST http://api:8000/api/events/by-stream-key/$key/post-process-recordings || true'
-    runOnRecordSegmentCompleteRestart: no
+      sh -c 'KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
+
 
 
