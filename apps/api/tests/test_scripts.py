@@ -310,3 +310,86 @@ def test_toggle_block_performance_endpoint(client, auth_headers, test_event):
     )
     assert toggle_resp2.status_code == 200
     assert toggle_resp2.json()["is_performance"] == initial_perf
+
+
+def test_auto_jump_setting_and_matching(client, auth_headers, test_event):
+    blocks = [
+        {"id": "b1", "order_index": 0, "speaker": "Caitlyn", "dialogue": "Welcome to our annual presentation"},
+        {"id": "b2", "order_index": 2, "speaker": "Caitlyn", "dialogue": "Please give a round of applause for our speakers"},
+        {"id": "b3", "order_index": 4, "speaker": "Dean", "dialogue": "Thank you Caitlyn for the kind words"},
+        {"id": "b4", "order_index": 25, "speaker": "Actor", "dialogue": "The golden eagle has landed in the distant valley"},
+        {"id": "b5", "order_index": 50, "speaker": "Narrator", "dialogue": "And so ends the second scene of our story"},
+    ]
+
+    # 1. When allow_jump=False:
+    # A distant utterance (> 5 lines away, e.g. line 25 while currently at line 0) is BLOCKED
+    blocked, conf = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="The golden eagle has landed in the distant valley",
+        current_block_index=0,
+        time_since_last_match=5.0,
+        threshold=0.60,
+        allow_jump=False
+    )
+    assert blocked is None
+
+    # An utterance within ±5 lines (e.g. line 2 while currently at line 0) matches successfully
+    local_matched, local_conf = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="Please give a round of applause for our speakers",
+        current_block_index=0,
+        time_since_last_match=0.5,
+        threshold=0.60,
+        allow_jump=False
+    )
+    assert local_matched is not None
+    assert local_matched["id"] == "b2"
+
+    # 2. When allow_jump=True:
+    # Distant utterance after cooldown is allowed to jump
+    jump_matched, jump_conf = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="The golden eagle has landed in the distant valley",
+        current_block_index=0,
+        time_since_last_match=5.0,
+        threshold=0.60,
+        allow_jump=True
+    )
+    assert jump_matched is not None
+    assert jump_matched["id"] == "b4"
+
+    # 3. Test API endpoint POST /auto-jump
+    # Import script first
+    client.post(
+        f"/api/events/{test_event}/script/import-text",
+        headers=auth_headers,
+        json={"text": "Host\tOpening\tHello world\nHost\tClosing\tGoodbye world"}
+    )
+
+    # Initial get script: auto_jump defaults to False
+    res1 = client.get(f"/api/events/{test_event}/script", headers=auth_headers)
+    assert res1.status_code == 200
+    assert res1.json()["auto_jump"] is False
+
+    # Enable auto_jump
+    enable_res = client.post(
+        f"/api/events/{test_event}/script/auto-jump",
+        headers=auth_headers,
+        json={"enabled": True}
+    )
+    assert enable_res.status_code == 200
+    assert enable_res.json()["auto_jump"] is True
+
+    # Verify script get returns auto_jump=True
+    res2 = client.get(f"/api/events/{test_event}/script", headers=auth_headers)
+    assert res2.status_code == 200
+    assert res2.json()["auto_jump"] is True
+
+    # Disable auto_jump
+    disable_res = client.post(
+        f"/api/events/{test_event}/script/auto-jump",
+        headers=auth_headers,
+        json={"enabled": False}
+    )
+    assert disable_res.status_code == 200
+    assert disable_res.json()["auto_jump"] is False

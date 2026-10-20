@@ -410,11 +410,13 @@ def match_spoken_text_to_script(
     threshold: float = 0.65,
     local_window_size: int = 5,
     global_search_delay_seconds: float = 3.0,
-    is_music: bool = False
+    is_music: bool = False,
+    allow_jump: bool = True,
 ) -> ScriptMatchResult:
     """
-    Finds the best matching script block for an incoming spoken utterance with anti-jump cooldown
-    and song/performance recognition.
+    Finds the best matching script block for an incoming spoken utterance with anti-jump cooldown,
+    song/performance recognition, and optional auto-jump across scenes.
+    When allow_jump is False and current_block_index is set, only searches ±local_window_size lines.
     """
     has_music = is_music or is_music_text(spoken_text)
 
@@ -471,6 +473,10 @@ def match_spoken_text_to_script(
 
         if best_local_score >= threshold and best_local_block is not None:
             return ScriptMatchResult(best_local_block, min(1.0, best_local_score), is_local=True)
+
+        # If auto-jump is disabled, strictly lock to local window (do not search beyond ±5 lines)
+        if not allow_jump:
+            return ScriptMatchResult(None, 0.0, False)
 
         # If within 3 seconds of last match, do NOT allow global jumping yet
         if time_since_last_match < global_search_delay_seconds:

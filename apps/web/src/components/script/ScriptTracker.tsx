@@ -23,6 +23,8 @@ import {
   RefreshCw,
   X,
   Volume2,
+  Route,
+  RouteOff,
 } from 'lucide-react';
 import { api, getWebSocketUrl, ScriptItem, ScriptBlock, ScriptSection, SubtitleItem } from '@/lib/api';
 import { Button } from '@/components/ui/button';
@@ -374,6 +376,13 @@ export default function ScriptTracker({
   // Settings
   const [autoFollow, setAutoFollow] = useState(true);
   const [speechSyncEnabled, setSpeechSyncEnabled] = useState(true);
+  const [autoJump, setAutoJump] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`script_auto_jump_${eventId}`);
+      if (saved !== null) return saved === 'true';
+    }
+    return false;
+  });
   const [wildcardThreshold, setWildcardThreshold] = useState(65); // 65% match default
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSectionId, setSelectedSectionId] = useState<string>('all');
@@ -401,6 +410,12 @@ export default function ScriptTracker({
       setLoading(true);
       const data = await api.getScript(eventId);
       setScript(data);
+      if (data && typeof data.auto_jump === 'boolean') {
+        setAutoJump(data.auto_jump);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(`script_auto_jump_${eventId}`, String(data.auto_jump));
+        }
+      }
       if (data && data.active_block_id) {
         setActiveBlockId(data.active_block_id);
       } else if (data && data.sections?.[0]?.blocks?.[0]) {
@@ -435,6 +450,9 @@ export default function ScriptTracker({
 
   const speechSyncEnabledRef = useRef(speechSyncEnabled);
   speechSyncEnabledRef.current = speechSyncEnabled;
+
+  const autoJumpRef = useRef(autoJump);
+  autoJumpRef.current = autoJump;
 
   const wildcardThresholdRef = useRef(wildcardThreshold);
   wildcardThresholdRef.current = wildcardThreshold;
@@ -542,10 +560,10 @@ export default function ScriptTracker({
     let bestId: string | null = null;
     let bestScore = 0;
 
-    // Nearby proximity search first
+    // Nearby proximity search first (±5 lines around current position)
     if (currIdx >= 0) {
-      const start = Math.max(0, currIdx - 2);
-      const end = Math.min(allBlocks.length - 1, currIdx + 6);
+      const start = Math.max(0, currIdx - 5);
+      const end = Math.min(allBlocks.length - 1, currIdx + 5);
       for (let i = start; i <= end; i++) {
         const blk = allBlocks[i];
         if (!blk.dialogue) continue;
@@ -557,8 +575,8 @@ export default function ScriptTracker({
       }
     }
 
-    // Global fallback
-    if (bestScore < (wildcardThreshold / 100)) {
+    // Global fallback (only if autoJump is enabled or when there is no current line selected)
+    if (bestScore < (wildcardThreshold / 100) && (autoJump || currIdx < 0)) {
       for (let i = 0; i < allBlocks.length; i++) {
         const blk = allBlocks[i];
         if (!blk.dialogue) continue;
@@ -584,7 +602,7 @@ export default function ScriptTracker({
         }
       }
     }
-  }, [isPlaybackMode, playbackTime, playbackSubtitles, allBlocks, wildcardThreshold, speechSyncEnabled, selectedSectionId]);
+  }, [isPlaybackMode, playbackTime, playbackSubtitles, allBlocks, wildcardThreshold, speechSyncEnabled, selectedSectionId, autoJump]);
 
   // WebSocket Listener for real-time speech matching and sync (stays connected permanently during live)
   useEffect(() => {
@@ -612,8 +630,27 @@ export default function ScriptTracker({
               if (targetBlock && selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== targetBlock.section_id) {
                 setSelectedSectionId('all');
               }
+            } else if (data.type === 'script_auto_jump_toggled') {
+              if (typeof data.enabled === 'boolean') {
+                setAutoJump(data.enabled);
+                if (typeof window !== 'undefined') {
+                  localStorage.setItem(`script_auto_jump_${eventId}`, String(data.enabled));
+                }
+              }
             } else if (data.type === 'script_sync' || data.type === 'script_jump') {
               if (data.block_id) {
+                // If auto-jump is disabled, ignore distant automatic syncs beyond ±5 lines
+                // (Manual jumps with type 'script_jump' triggered by user clicks are always respected)
+                if (data.type === 'script_sync' && !autoJumpRef.current) {
+                  const currBlockId = activeBlockIdRef.current;
+                  const currentBlocks = allBlocksRef.current;
+                  const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
+                  const targetIdx = currentBlocks.findIndex((b) => b.id === data.block_id);
+                  if (currIdx >= 0 && targetIdx >= 0 && Math.abs(targetIdx - currIdx) > 5) {
+                    return;
+                  }
+                }
+
                 setActiveBlockId(data.block_id);
                 lastMatchTimeRef.current = Date.now();
                 if (data.confidence) setLastConfidence(data.confidence);
@@ -642,14 +679,15 @@ export default function ScriptTracker({
 
                 let targetPerfBlock: ScriptBlock | null = null;
                 if (currIdx >= 0) {
-                  for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + 8); i++) {
+                  const maxForward = autoJumpRef.current ? 8 : 5;
+                  for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + maxForward); i++) {
                     if (isPerformanceBlock(currentBlocks[i])) {
                       targetPerfBlock = currentBlocks[i];
                       break;
                     }
                   }
                 }
-                if (!targetPerfBlock) {
+                if (!targetPerfBlock && autoJumpRef.current) {
                   const words = spoken.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
                   targetPerfBlock = currentBlocks.find((b) => {
                     if (!isPerformanceBlock(b)) return false;
@@ -730,6 +768,11 @@ export default function ScriptTracker({
                     if (selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== bestLocalMatch.section_id) {
                       setSelectedSectionId('all');
                     }
+                    return;
+                  }
+
+                  // If auto-jump is disabled, strictly lock to ±5 lines (do NOT search or jump beyond)
+                  if (!autoJumpRef.current) {
                     return;
                   }
 
@@ -898,6 +941,28 @@ export default function ScriptTracker({
     }
   };
 
+  // Toggle auto-jump across scenes vs strict ±5 lines sync
+  const handleToggleAutoJump = async () => {
+    const nextValue = !autoJump;
+    setAutoJump(nextValue);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(`script_auto_jump_${eventId}`, String(nextValue));
+    }
+
+    toast.info(nextValue ? 'Scene Auto-Jump Enabled' : 'Strict ±5 Lines Mode Enabled', {
+      description: nextValue
+        ? 'Speech sync can jump across scenes when lines match'
+        : 'Speech sync will only look forward & backward 5 lines (no distant jumps)',
+      duration: 3000,
+    });
+
+    try {
+      await api.toggleScriptAutoJump(eventId, nextValue);
+    } catch (err) {
+      console.debug('Script auto-jump state updated locally', err);
+    }
+  };
+
   // Find active block, active cues & upcoming cues
   const activeIndex = useMemo(() => {
     if (!activeBlockId) return -1;
@@ -1057,6 +1122,10 @@ export default function ScriptTracker({
             </div>
             <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
               <span>{isPlaybackMode ? 'Take Replay Video Sync' : `Speech-to-Script Wildcard Sync (~${wildcardThreshold}% tolerance)`}</span>
+              <span className="text-muted-foreground/50">•</span>
+              <span className={autoJump ? 'text-blue-400 font-medium' : 'text-slate-400'}>
+                {autoJump ? 'Scene Jump: On' : 'Scope: ±5 Lines'}
+              </span>
               {lastConfidence && (
                 <span className="text-emerald-400 font-mono font-medium">
                   • {Math.round(lastConfidence * 100)}% match
@@ -1094,6 +1163,42 @@ export default function ScriptTracker({
                 ? (speechSyncEnabled ? 'Video Sync On' : 'Video Sync Off')
                 : (speechSyncEnabled ? 'AI Sync Active' : 'AI Sync Off')}
             </span>
+          </Button>
+
+          {/* Auto-Jump Toggle */}
+          <Button
+            size="sm"
+            variant={autoJump ? 'default' : 'outline'}
+            onClick={handleToggleAutoJump}
+            className={`gap-1.5 text-xs h-8 transition-colors ${
+              autoJump
+                ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-sm shadow-blue-500/20'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            title={
+              autoJump
+                ? 'Auto-Jump is ON: Speech sync can jump across scenes when rehearsal jumps'
+                : 'Auto-Jump is OFF: Speech sync only looks forward and backward 5 lines'
+            }
+          >
+            {autoJump ? (
+              <Route className="w-3.5 h-3.5 text-blue-200" />
+            ) : (
+              <RouteOff className="w-3.5 h-3.5 text-muted-foreground" />
+            )}
+            <span className="hidden sm:inline">
+              {autoJump ? 'Auto-Jump' : 'Jump Off'}
+            </span>
+            <Badge
+              variant="outline"
+              className={`text-[9px] px-1 py-0 h-4 uppercase font-mono tracking-wider ${
+                autoJump
+                  ? 'border-blue-400/40 text-blue-100 bg-blue-700/50'
+                  : 'border-border text-muted-foreground bg-muted/60'
+              }`}
+            >
+              {autoJump ? 'Scenes' : '±5 lines'}
+            </Badge>
           </Button>
 
           {/* Teleprompter Fullscreen Mode */}
@@ -1175,23 +1280,44 @@ export default function ScriptTracker({
             )}
           </div>
 
-          {/* Wildcard Tolerance Slider */}
-          <div className="flex items-center gap-2 text-slate-400">
-            <Sliders className="w-3.5 h-3.5 text-purple-400" />
-            <span>Wildcard:</span>
-            <input
-              type="range"
-              min="50"
-              max="95"
-              step="5"
-              value={wildcardThreshold}
-              onChange={(e) => setWildcardThreshold(Number(e.target.value))}
-              className="w-20 accent-purple-500 cursor-pointer"
-              title={`Wildcard tolerance: ${wildcardThreshold}% match required`}
-            />
-            <span className="font-mono text-purple-300 text-[11px] font-semibold">
-              {wildcardThreshold}%
-            </span>
+          <div className="flex items-center gap-3">
+            {/* Auto-Jump Scope Quick Pill */}
+            <button
+              type="button"
+              onClick={handleToggleAutoJump}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-all ${
+                autoJump
+                  ? 'bg-blue-500/15 border-blue-500/40 text-blue-300 hover:bg-blue-500/25'
+                  : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground hover:bg-muted/70'
+              }`}
+              title={
+                autoJump
+                  ? 'Auto-Jump enabled across all scenes. Click to restrict to ±5 lines.'
+                  : 'Auto-Jump disabled (restricted to ±5 lines). Click to allow scene jumping.'
+              }
+            >
+              {autoJump ? <Route className="w-3.5 h-3.5 text-blue-400" /> : <RouteOff className="w-3.5 h-3.5 text-slate-400" />}
+              <span>{autoJump ? 'Allow Scene Jumps' : 'Strict ±5 Lines (No Jump)'}</span>
+            </button>
+
+            {/* Wildcard Tolerance Slider */}
+            <div className="flex items-center gap-2 text-slate-400">
+              <Sliders className="w-3.5 h-3.5 text-purple-400" />
+              <span>Wildcard:</span>
+              <input
+                type="range"
+                min="50"
+                max="95"
+                step="5"
+                value={wildcardThreshold}
+                onChange={(e) => setWildcardThreshold(Number(e.target.value))}
+                className="w-20 accent-purple-500 cursor-pointer"
+                title={`Wildcard tolerance: ${wildcardThreshold}% match required`}
+              />
+              <span className="font-mono text-purple-300 text-[11px] font-semibold">
+                {wildcardThreshold}%
+              </span>
+            </div>
           </div>
         </div>
       )}

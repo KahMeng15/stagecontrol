@@ -19,6 +19,7 @@ from app.schemas.script import (
     ScriptBlockUpdate,
     ScriptTextImportRequest,
     ScriptJumpRequest,
+    ScriptAutoJumpRequest,
 )
 from app.services.script_parser import parse_docx_bytes, parse_raw_text
 from app.services.transcription import transcription_service
@@ -26,9 +27,10 @@ from app.services.transcription import transcription_service
 logger = logging.getLogger("stagecontrol.scripts")
 router = APIRouter(prefix="/events/{event_id}/script", tags=["scripts"])
 
-# In-memory tracking of currently active block and last match time per event
+# In-memory tracking of currently active block, last match time, and auto-jump toggle per event
 event_active_blocks: dict[str, str] = {}
 event_last_script_match_time: dict[str, float] = {}
+event_auto_jump: dict[str, bool] = {}
 
 def resolve_event_and_membership(db: Session, event_id: str, user: User) -> tuple[Event, Membership]:
     event = db.query(Event).filter((Event.id == event_id) | (Event.slug == event_id)).first()
@@ -67,6 +69,7 @@ def get_event_script(
     # Compute total blocks
     total_blocks = sum(len(s.blocks) for s in script.sections)
     active_block = event_active_blocks.get(actual_event_id) or event_active_blocks.get(event_id)
+    auto_jump = event_auto_jump.get(actual_event_id, False) or event_auto_jump.get(event_id, False)
 
     return ScriptResponse(
         id=script.id,
@@ -78,7 +81,8 @@ def get_event_script(
         updated_at=script.updated_at,
         sections=script.sections,
         total_blocks=total_blocks,
-        active_block_id=active_block
+        active_block_id=active_block,
+        auto_jump=auto_jump
     )
 
 @router.post("/upload", response_model=ScriptResponse)
@@ -185,6 +189,34 @@ async def jump_script_block(
 
     return {"status": "ok", "active_block_id": payload.block_id}
 
+@router.post("/auto-jump")
+async def toggle_script_auto_jump(
+    event_id: str,
+    payload: ScriptAutoJumpRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Toggles whether automatic speech sync can jump across scenes beyond ±5 lines."""
+    event, membership = resolve_event_and_membership(db, event_id, current_user)
+    if not has_sufficient_role(membership.role, EventRole.CREW):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Crew, Stage Manager or Admin permissions required")
+    actual_event_id = event.id
+
+    event_auto_jump[actual_event_id] = payload.enabled
+    event_auto_jump[event_id] = payload.enabled
+
+    broadcast_payload = {
+        "type": "script_auto_jump_toggled",
+        "event_id": actual_event_id,
+        "enabled": payload.enabled,
+        "triggered_by": current_user.username or current_user.email
+    }
+    await transcription_service.broadcast_subtitle(actual_event_id, broadcast_payload)
+    if event_id != actual_event_id:
+        await transcription_service.broadcast_subtitle(event_id, broadcast_payload)
+
+    return {"status": "ok", "auto_jump": payload.enabled}
+
 @router.delete("")
 async def delete_event_script(
     event_id: str,
@@ -206,6 +238,8 @@ async def delete_event_script(
     event_active_blocks.pop(event_id, None)
     event_last_script_match_time.pop(actual_event_id, None)
     event_last_script_match_time.pop(event_id, None)
+    event_auto_jump.pop(actual_event_id, None)
+    event_auto_jump.pop(event_id, None)
 
     await transcription_service.broadcast_subtitle(actual_event_id, {
         "type": "script_deleted",

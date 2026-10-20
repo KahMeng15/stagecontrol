@@ -41,6 +41,7 @@ class ScriptResponse(BaseModel):
     sections: List[ScriptSectionResponse] = []
     total_blocks: int = 0
     active_block_id: Optional[str] = None
+    auto_jump: bool = False
     model_config = ConfigDict(from_attributes=True)
 
 class ScriptTextImportRequest(BaseModel):
@@ -49,3 +50,6 @@ class ScriptTextImportRequest(BaseModel):
 
 class ScriptJumpRequest(BaseModel):
     block_id: str
+
+class ScriptAutoJumpRequest(BaseModel):
+    enabled: bool

@@ -186,6 +186,7 @@ export interface ScriptItem {
   sections: ScriptSection[];
   total_blocks: number;
   active_block_id?: string | null;
+  auto_jump?: boolean;
 }
 
 class ApiError extends Error {
@@ -481,6 +482,12 @@ export const api = {
     request<{ status: string; active_block_id: string }>(`/events/${eventId}/script/jump`, {
       method: 'POST',
       body: JSON.stringify({ block_id: blockId }),
+    }),
+
+  toggleScriptAutoJump: (eventId: string, enabled: boolean) =>
+    request<{ status: string; auto_jump: boolean }>(`/events/${eventId}/script/auto-jump`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
     }),
 
   toggleBlockPerformance: (eventId: string, blockId: string) =>

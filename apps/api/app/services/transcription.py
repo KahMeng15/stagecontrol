@@ -509,7 +509,7 @@ class TranscriptionService:
         try:
             from app.models.script import Script
             from app.services.script_parser import match_spoken_text_to_script
-            from app.routers.scripts import event_active_blocks, event_last_script_match_time
+            from app.routers.scripts import event_active_blocks, event_last_script_match_time, event_auto_jump
 
             db: Session = SessionLocal()
             try:
@@ -539,6 +539,7 @@ class TranscriptionService:
                 now = time.time()
                 last_time = event_last_script_match_time.get(event_id, 0.0)
                 time_since = (now - last_time) if last_time > 0 else 999.0
+                allow_jump = event_auto_jump.get(event_id, False)
 
                 matched_block, confidence = match_spoken_text_to_script(
                     blocks=blocks,
@@ -548,7 +549,8 @@ class TranscriptionService:
                     threshold=0.62,
                     local_window_size=5,
                     global_search_delay_seconds=3.0,
-                    is_music=is_music
+                    is_music=is_music,
+                    allow_jump=allow_jump
                 )
 
                 if matched_block:
