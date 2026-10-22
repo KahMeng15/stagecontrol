@@ -7,10 +7,8 @@ async function proxy(
   const { path } = await props.params;
   const targetPath = path && path.length > 0 ? path.join('/') : '';
   
-  const defaultInternal = process.env.NODE_ENV === 'development' ? 'http://localhost:8000' : 'http://api:8000';
-  const internalBase = (process.env.INTERNAL_API_URL || defaultInternal).replace(/\/$/, '');
   const search = request.nextUrl.search;
-  const targetUrl = `${internalBase}/api/${targetPath}${search}`;
+  const subPath = `api/${targetPath}${search}`;
 
   const headers = new Headers(request.headers);
   headers.delete('host');
@@ -21,29 +19,42 @@ async function proxy(
     body = await request.blob();
   }
 
-  try {
-    const res = await fetch(targetUrl, {
-      method: request.method,
-      headers,
-      body,
-      cache: 'no-store',
-      redirect: 'manual',
-    });
+  // Candidate bases: explicit env var, then docker service 'http://api:8000', then local host 'http://127.0.0.1:8000'
+  const explicitBase = process.env.INTERNAL_API_URL?.replace(/\/$/, '');
+  const candidateBases = explicitBase
+    ? [explicitBase]
+    : ['http://api:8000', 'http://127.0.0.1:8000', 'http://localhost:8000'];
 
-    const responseHeaders = new Headers(res.headers);
-    responseHeaders.delete('transfer-encoding');
+  let lastError: any = null;
+  for (const base of candidateBases) {
+    const targetUrl = `${base}/${subPath}`;
+    try {
+      const res = await fetch(targetUrl, {
+        method: request.method,
+        headers,
+        body,
+        cache: 'no-store',
+        redirect: 'manual',
+      });
 
-    return new NextResponse(res.body, {
-      status: res.status,
-      statusText: res.statusText,
-      headers: responseHeaders,
-    });
-  } catch (err: any) {
-    return NextResponse.json(
-      { error: 'Internal API proxy error', detail: err.message },
-      { status: 502 }
-    );
+      const responseHeaders = new Headers(res.headers);
+      responseHeaders.delete('transfer-encoding');
+
+      return new NextResponse(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: responseHeaders,
+      });
+    } catch (err: any) {
+      lastError = err;
+      continue;
+    }
   }
+
+  return NextResponse.json(
+    { error: 'Internal API proxy error', detail: lastError?.message || 'Failed to reach API backend' },
+    { status: 502 }
+  );
 }
 
 export const GET = proxy;

@@ -36,6 +36,7 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000/api
+      - INTERNAL_API_URL=http://api:8000
       - WATCHPACK_POLLING=true
       - PORT=3000
       - HOSTNAME=0.0.0.0

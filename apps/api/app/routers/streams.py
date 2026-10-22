@@ -523,28 +523,6 @@ def stream_recording_video(
         if proxy_path.exists() and proxy_path.stat().st_size > 1024:
             target_path = proxy_path
 
-    # Ensure mvhd box is healthy before serving to browser
-    now_utc = datetime.now(timezone.utc)
-    mtime = datetime.fromtimestamp(target_path.stat().st_mtime, tz=timezone.utc)
-    if (now_utc - mtime).total_seconds() >= 4:
-        from app.services.video_processor import repair_corrupted_mvhd
-        if repair_corrupted_mvhd(target_path):
-            meta = probe_video_metadata(target_path)
-            if meta.get("duration", 0.0) > 0 and target_path == file_path:
-                recording.duration_seconds = round(meta["duration"], 1)
-                recording.file_size_bytes = target_path.stat().st_size
-                recording.status = "ready"
-                db.commit()
-
-    # If the file being streamed is settled and still an unindexed fragmented MP4, faststart remux it
-    if (now_utc - mtime).total_seconds() >= 4 and is_fragmented_mp4(target_path):
-        success, exact_dur, new_size = remux_to_faststart_mp4(target_path)
-        if success and target_path == file_path:
-            recording.duration_seconds = round(exact_dur, 1)
-            recording.file_size_bytes = new_size
-            recording.status = "ready"
-            db.commit()
-
     return create_range_video_response(target_path, request)
 
 @router.post("/recordings/{recording_id}/optimize", response_model=RecordingResponse)

@@ -601,19 +601,7 @@ export function RecordingArchive({
                   </button>
                 </div>
 
-                {isSMOrAdmin && !selectedRecording.is_optimized && (
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    onClick={() => handleOptimizeTake(selectedRecording.id)}
-                    disabled={optimizingId === selectedRecording.id}
-                    className="gap-1 text-[11px] border-amber-500/40 text-amber-300 hover:bg-amber-500/10 h-6 px-2"
-                    title="Generate compressed 720p proxy & faststart index"
-                  >
-                    <Sparkles className={cn("w-3 h-3 text-amber-400", optimizingId === selectedRecording.id && "animate-spin")} />
-                    <span>{optimizingId === selectedRecording.id ? "Optimizing..." : "Optimize (720p)"}</span>
-                  </Button>
-                )}
+
 
                 <Button
                   size="xs"
@@ -765,6 +753,8 @@ export function RecordingArchive({
                   setVideoError(null);
                 }}
                 onCanPlay={() => setIsBuffering(false)}
+                onCanPlayThrough={() => setIsBuffering(false)}
+                onLoadedData={() => setIsBuffering(false)}
                 onSeeked={() => setIsBuffering(false)}
                 onPause={() => setIsPlaying(false)}
                 onError={(e) => {
@@ -1551,18 +1541,7 @@ export function RecordingArchive({
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {isSMOrAdmin && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleOptimizeTake(rec.id)}
-                          disabled={optimizingId === rec.id}
-                          className="h-7 w-7 text-muted-foreground hover:text-primary"
-                          title={rec.is_optimized ? "Re-encode & optimize 720p web proxy" : "Encode 720p web proxy (~85% smaller)"}
-                        >
-                          <Sparkles className={`w-3.5 h-3.5 ${rec.is_optimized ? 'text-emerald-400' : 'text-primary'} ${optimizingId === rec.id ? 'animate-spin' : ''}`} />
-                        </Button>
-                      )}
+
                       <Button
                         size="sm"
                         variant={isSelected ? "default" : "secondary"}
