@@ -69,7 +69,14 @@ def get_event_script(
     # Compute total blocks
     total_blocks = sum(len(s.blocks) for s in script.sections)
     active_block = event_active_blocks.get(actual_event_id) or event_active_blocks.get(event_id)
-    auto_jump = event_auto_jump.get(actual_event_id, False) or event_auto_jump.get(event_id, False)
+    if actual_event_id in event_auto_jump:
+        auto_jump = event_auto_jump[actual_event_id]
+    elif event_id in event_auto_jump:
+        auto_jump = event_auto_jump[event_id]
+    else:
+        auto_jump = bool(getattr(script, "auto_jump", False))
+        event_auto_jump[actual_event_id] = auto_jump
+        event_auto_jump[event_id] = auto_jump
 
     return ScriptResponse(
         id=script.id,
@@ -204,6 +211,12 @@ async def toggle_script_auto_jump(
 
     event_auto_jump[actual_event_id] = payload.enabled
     event_auto_jump[event_id] = payload.enabled
+
+    # Persist in database on all scripts for this event
+    scripts = db.query(Script).filter(Script.event_id == actual_event_id).all()
+    for s in scripts:
+        s.auto_jump = payload.enabled
+    db.commit()
 
     broadcast_payload = {
         "type": "script_auto_jump_toggled",
@@ -342,6 +355,10 @@ def _persist_parsed_script(db: Session, event_id: str, parsed_data: dict) -> Scr
     # Archive/deactivate previous scripts
     previous_scripts = db.query(Script).filter(Script.event_id == event_id).all()
     next_version = len(previous_scripts) + 1
+    prev_active = next((ps for ps in previous_scripts if ps.is_active == 1), None)
+    auto_jump_setting = bool(getattr(prev_active, "auto_jump", False)) if prev_active else (
+        event_auto_jump.get(event_id, False)
+    )
     for ps in previous_scripts:
         ps.is_active = 0
 
@@ -350,7 +367,8 @@ def _persist_parsed_script(db: Session, event_id: str, parsed_data: dict) -> Scr
         event_id=event_id,
         title=parsed_data.get("title", "Imported Script"),
         version=next_version,
-        is_active=1
+        is_active=1,
+        auto_jump=auto_jump_setting
     )
     db.add(script)
     db.flush()
@@ -402,5 +420,6 @@ def _persist_parsed_script(db: Session, event_id: str, parsed_data: dict) -> Scr
         updated_at=script.updated_at,
         sections=script.sections,
         total_blocks=total_blocks,
-        active_block_id=first_block_id
+        active_block_id=first_block_id,
+        auto_jump=bool(getattr(script, "auto_jump", auto_jump_setting))
     )

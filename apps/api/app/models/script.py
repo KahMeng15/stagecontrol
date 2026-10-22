@@ -12,6 +12,7 @@ class Script(Base):
     title = Column(String(150), nullable=False)
     version = Column(Integer, default=1, nullable=False)
     is_active = Column(Integer, default=1, nullable=False)
+    auto_jump = Column(Boolean, default=False, nullable=False)
 
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)

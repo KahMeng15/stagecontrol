@@ -35,6 +35,11 @@ async def lifespan(app: FastAPI):
         with engine.connect() as conn:
             insp = inspect(conn)
             tables = insp.get_table_names()
+            if "scripts" in tables:
+                script_cols = [c["name"] for c in insp.get_columns("scripts")]
+                if "auto_jump" not in script_cols:
+                    conn.execute(text("ALTER TABLE scripts ADD COLUMN auto_jump BOOLEAN NOT NULL DEFAULT 0"))
+                    conn.commit()
             if "script_blocks" in tables:
                 block_cols = [c["name"] for c in insp.get_columns("script_blocks")]
                 if "is_performance" not in block_cols:

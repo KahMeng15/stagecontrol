@@ -539,7 +539,10 @@ class TranscriptionService:
                 now = time.time()
                 last_time = event_last_script_match_time.get(event_id, 0.0)
                 time_since = (now - last_time) if last_time > 0 else 999.0
-                allow_jump = event_auto_jump.get(event_id, False)
+                allow_jump = event_auto_jump.get(event_id)
+                if allow_jump is None:
+                    allow_jump = bool(getattr(active_script, "auto_jump", False))
+                    event_auto_jump[event_id] = allow_jump
 
                 matched_block, confidence = match_spoken_text_to_script(
                     blocks=blocks,

@@ -422,12 +422,13 @@ def match_spoken_text_to_script(
 
     # 1. Local Search (±5 lines around current position)
     if current_block_index is not None:
-        # Check if current line or immediate next lines (0 <= diff <= 8) is a musical performance / song / dance
+        # Check if current line or immediate next lines (0 <= diff <= max_forward) is a musical performance / song / dance
         if has_music:
+            max_forward = 8 if allow_jump else min(local_window_size, 5)
             for blk in blocks:
                 order_idx = getattr(blk, "order_index", 0) if not isinstance(blk, dict) else blk.get("order_index", 0)
                 diff = order_idx - current_block_index
-                if 0 <= diff <= 8 and is_music_or_performance_block(blk):
+                if 0 <= diff <= max_forward and is_music_or_performance_block(blk):
                     return ScriptMatchResult(blk, 0.95, is_local=True)
             # If current block is already a performance block, keep it locked during music
             curr_blk = next((b for b in blocks if (getattr(b, "order_index", 0) if not isinstance(b, dict) else b.get("order_index", 0)) == current_block_index), None)
@@ -482,9 +483,17 @@ def match_spoken_text_to_script(
         if time_since_last_match < global_search_delay_seconds:
             return ScriptMatchResult(None, 0.0, False)
     else:
+        # If current_block_index is None and allow_jump is False, do NOT allow distant jumps across scenes
+        if not allow_jump:
+            return ScriptMatchResult(None, 0.0, False)
+
         words = [w for w in normalize_script_text(spoken_text).split() if len(w) > 1]
         if len(words) < 2 and not has_music:
             return ScriptMatchResult(None, 0.0, True)
+
+    # 2. Global Search (strictly requires allow_jump=True)
+    if not allow_jump:
+        return ScriptMatchResult(None, 0.0, False)
 
     # If music is detected but current_block_index was None, check if words match any performance block or return first performance
     if has_music:

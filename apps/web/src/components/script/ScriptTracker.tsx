@@ -526,14 +526,15 @@ export default function ScriptTracker({
       // Find current or upcoming performance block
       let targetPerfBlock: ScriptBlock | null = null;
       if (currIdx >= 0) {
-        for (let i = currIdx; i <= Math.min(allBlocks.length - 1, currIdx + 8); i++) {
+        const maxForward = autoJump ? 8 : 5;
+        for (let i = currIdx; i <= Math.min(allBlocks.length - 1, currIdx + maxForward); i++) {
           if (isPerformanceBlock(allBlocks[i])) {
             targetPerfBlock = allBlocks[i];
             break;
           }
         }
       }
-      if (!targetPerfBlock) {
+      if (!targetPerfBlock && autoJump) {
         const words = spoken.toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
         targetPerfBlock = allBlocks.find((b) => {
           if (!isPerformanceBlock(b)) return false;
@@ -575,8 +576,8 @@ export default function ScriptTracker({
       }
     }
 
-    // Global fallback (only if autoJump is enabled or when there is no current line selected)
-    if (bestScore < (wildcardThreshold / 100) && (autoJump || currIdx < 0)) {
+    // Global fallback (only if autoJump is enabled - strictly require autoJump)
+    if (bestScore < (wildcardThreshold / 100) && autoJump) {
       for (let i = 0; i < allBlocks.length; i++) {
         const blk = allBlocks[i];
         if (!blk.dialogue) continue;
@@ -647,6 +648,9 @@ export default function ScriptTracker({
                   const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
                   const targetIdx = currentBlocks.findIndex((b) => b.id === data.block_id);
                   if (currIdx >= 0 && targetIdx >= 0 && Math.abs(targetIdx - currIdx) > 5) {
+                    return;
+                  }
+                  if (currIdx < 0) {
                     return;
                   }
                 }
@@ -782,7 +786,11 @@ export default function ScriptTracker({
                   }
                 }
 
-                // Step 2: Global Fallback (only triggered after 3s without local match or if starting fresh)
+                // Step 2: Global Fallback (strictly requires autoJump to be enabled)
+                if (!autoJumpRef.current) {
+                  return;
+                }
+
                 let bestGlobalMatch: ScriptBlock | null = null;
                 let bestGlobalScore = 0;
                 const distantThreshold = Math.max(thresholdFraction, 0.70); // Require solid match for scene jumps

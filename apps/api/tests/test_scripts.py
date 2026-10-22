@@ -358,7 +358,32 @@ def test_auto_jump_setting_and_matching(client, auth_headers, test_event):
     assert jump_matched is not None
     assert jump_matched["id"] == "b4"
 
-    # 3. Test API endpoint POST /auto-jump
+    # 3. Music Gating when allow_jump=False:
+    perf_blocks = [
+        {"id": "p0", "order_index": 0, "speaker": "Host", "dialogue": "Welcome everyone", "is_performance": False},
+        {"id": "p1", "order_index": 30, "speaker": "Choir", "cue": "[CHOIR PERFORMANCE]", "dialogue": "Ode to Joy", "is_performance": True},
+    ]
+    # Distant music cue (> 5 lines away) must NOT be jumped to when allow_jump is False
+    music_blocked, _ = match_spoken_text_to_script(
+        blocks=perf_blocks,
+        spoken_text="[Music]",
+        current_block_index=0,
+        is_music=True,
+        allow_jump=False
+    )
+    assert music_blocked is None
+
+    # 4. Starting fresh / unindexed (current_block_index=None) when allow_jump=False:
+    # Must NOT execute global fallback search across distant blocks
+    fresh_blocked, _ = match_spoken_text_to_script(
+        blocks=blocks,
+        spoken_text="The golden eagle has landed in the distant valley",
+        current_block_index=None,
+        allow_jump=False
+    )
+    assert fresh_blocked is None
+
+    # 5. Test API endpoint POST /auto-jump & Database Persistence across container restarts
     # Import script first
     client.post(
         f"/api/events/{test_event}/script/import-text",
@@ -380,10 +405,14 @@ def test_auto_jump_setting_and_matching(client, auth_headers, test_event):
     assert enable_res.status_code == 200
     assert enable_res.json()["auto_jump"] is True
 
-    # Verify script get returns auto_jump=True
-    res2 = client.get(f"/api/events/{test_event}/script", headers=auth_headers)
-    assert res2.status_code == 200
-    assert res2.json()["auto_jump"] is True
+    # Simulate container restart / memory wipe: clear in-memory event_auto_jump
+    from app.routers.scripts import event_auto_jump
+    event_auto_jump.clear()
+
+    # Verify script get still returns auto_jump=True persisted from database
+    res_reboot = client.get(f"/api/events/{test_event}/script", headers=auth_headers)
+    assert res_reboot.status_code == 200
+    assert res_reboot.json()["auto_jump"] is True
 
     # Disable auto_jump
     disable_res = client.post(
@@ -393,3 +422,9 @@ def test_auto_jump_setting_and_matching(client, auth_headers, test_event):
     )
     assert disable_res.status_code == 200
     assert disable_res.json()["auto_jump"] is False
+
+    # Simulate another container restart
+    event_auto_jump.clear()
+    res_reboot2 = client.get(f"/api/events/{test_event}/script", headers=auth_headers)
+    assert res_reboot2.status_code == 200
+    assert res_reboot2.json()["auto_jump"] is False
