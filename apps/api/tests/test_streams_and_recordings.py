@@ -368,3 +368,104 @@ def test_recording_corruption_handling_and_webhooks(client, test_db, tmp_path):
     if event_rec_dir.exists():
         shutil.rmtree(event_rec_dir, ignore_errors=True)
 
+def test_recording_soft_delete_safeguard_when_file_missing(client, test_db, tmp_path):
+    """
+    Test zero-deletion safeguard:
+    When backing .mp4 files disappear or storage is temporarily unmounted,
+    the API marks recordings as status='missing' instead of pruning DB records.
+    If files return, status is automatically restored to 'ready'.
+    """
+    user = User(
+        username="retention_admin",
+        email="retention_admin@stageflow.io",
+        hashed_password=hash_password("adminpass123"),
+        is_superadmin=True
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    token = create_access_token(user.id, extra_claims={"sub": user.id, "email": user.email, "role": "admin"})
+    headers = {"Authorization": f"Bearer {token}"}
+
+    event = Event(
+        name="Retention Test Event",
+        slug="retention-test-event",
+        created_by_id=user.id,
+        stream_key="retention-key-777"
+    )
+    test_db.add(event)
+    test_db.commit()
+
+    membership = Membership(
+        user_id=user.id,
+        event_id=event.id,
+        role=EventRole.ADMIN.value,
+        callsign="Director"
+    )
+    test_db.add(membership)
+    test_db.commit()
+
+    # Create dummy recording file on disk
+    event_rec_dir = RECORDINGS_DIR / "live" / event.stream_key
+    event_rec_dir.mkdir(parents=True, exist_ok=True)
+    take_file = event_rec_dir / "2026-10-19_04-00-00.mp4"
+    take_file.write_bytes(b"dummy mp4 content for testing")
+
+    rec = Recording(
+        event_id=event.id,
+        filename=f"live/{event.stream_key}/2026-10-19_04-00-00.mp4",
+        file_size_bytes=len(b"dummy mp4 content for testing"),
+        duration_seconds=300.0,
+        status="ready",
+        title="Show Act 1 Take"
+    )
+    # Also add a stale .tmp recording to verify temp files are pruned
+    tmp_rec = Recording(
+        event_id=event.id,
+        filename=f"live/{event.stream_key}/stale.faststart_tmp.mp4",
+        file_size_bytes=100,
+        duration_seconds=10.0,
+        status="processing",
+        title="Stale Remux Temp"
+    )
+    test_db.add_all([rec, tmp_rec])
+    test_db.commit()
+
+    # 1. Backing file is removed from disk (simulating MediaMTX 24h prune or storage unmount)
+    take_file.unlink()
+    assert not take_file.exists()
+
+    # 2. Call list recordings endpoint
+    resp = client.get(f"/api/events/{event.id}/recordings", headers=headers)
+    assert resp.status_code == 200
+    data = resp.json()
+
+    # The stale .tmp file should have been cleaned up
+    assert len(data) == 1
+    item = data[0]
+    assert item["id"] == rec.id
+    # The missing recording MUST NOT be deleted; it should be soft-marked as "missing"
+    assert item["status"] == "missing"
+
+    # Verify directly in the DB that record still exists
+    db_rec = test_db.query(Recording).filter(Recording.id == rec.id).first()
+    assert db_rec is not None
+    assert db_rec.status == "missing"
+
+    # Streaming the missing recording should return 404 with clear detail
+    stream_resp = client.get(f"/api/events/{event.id}/recordings/{rec.id}/stream", headers=headers)
+    assert stream_resp.status_code == 404
+    assert "missing" in stream_resp.json()["detail"].lower()
+
+    # 3. Simulate file restored / storage re-mounted
+    take_file.write_bytes(b"restored mp4 content")
+    resp_recovered = client.get(f"/api/events/{event.id}/recordings", headers=headers)
+    assert resp_recovered.status_code == 200
+    recovered_item = resp_recovered.json()[0]
+    assert recovered_item["status"] == "ready"
+
+    # Clean up test files
+    if event_rec_dir.exists():
+        shutil.rmtree(event_rec_dir, ignore_errors=True)
+
+

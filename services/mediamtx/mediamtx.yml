@@ -51,6 +51,7 @@ paths:
   all:
     # Allow RTMP / WHIP publishers
     source: publisher
+    recordDeleteAfter: 0s  # Disables automatic deletion globally
 
   # Transcoded low-res streams (do not re-transcode or record)
   ~^live/(?P<key>[^/]+)_low$:
@@ -64,6 +65,7 @@ paths:
     recordFormat: fmp4
     recordPartDuration: 1s
     recordSegmentDuration: 1h
+    recordDeleteAfter: 0s  # Explicitly prevents deletion of all live takes
 
     # Automatically generate low-bandwidth 720p @ 800kbps live rendition:
     runOnAvailable: >

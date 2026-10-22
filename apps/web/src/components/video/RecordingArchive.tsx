@@ -21,6 +21,7 @@ import {
   HardDrive,
   Clock,
   AlertCircle,
+  AlertTriangle,
   Flag,
   Bookmark,
   Plus,
@@ -647,7 +648,18 @@ export function RecordingArchive({
 
         <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden group">
           {selectedRecording ? (
-            selectedRecording.status === 'failed' ? (
+            selectedRecording.status === 'missing' ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/95 border border-amber-500/30 z-20">
+                <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mb-3 shadow-xl shadow-amber-500/10">
+                  <AlertTriangle className="w-7 h-7" />
+                </div>
+                <h4 className="text-base font-bold text-amber-200">Recording Media File Missing</h4>
+                <p className="text-xs text-slate-400 max-w-md mt-1.5 leading-relaxed">
+                  The backing video file is currently missing or detached from storage.
+                  Metadata, markers, and subtitles have been safely preserved by the zero-deletion safeguard.
+                </p>
+              </div>
+            ) : selectedRecording.status === 'failed' ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center p-6 text-center bg-slate-950/95 border border-red-500/30 z-20">
                 <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/30 flex items-center justify-center text-red-400 mb-3 shadow-xl shadow-red-500/10">
                   <AlertCircle className="w-7 h-7" />
@@ -1389,19 +1401,28 @@ export function RecordingArchive({
                       variant={isSelected ? "default" : "secondary"}
                       onClick={() => {
                         if (isSelected) {
-                          if (rec.status !== 'failed') togglePlay();
+                          if (rec.status !== 'failed' && rec.status !== 'missing') togglePlay();
                         } else {
                           setSelectedRecording(rec);
-                          setAutoPlayNext(rec.status !== 'failed');
+                          setAutoPlayNext(rec.status !== 'failed' && rec.status !== 'missing');
                         }
                       }}
                       className={cn(
                         "h-7 w-7 shrink-0",
-                        rec.status === 'failed' && "border-red-500/40 text-red-400 hover:bg-red-500/10"
+                        rec.status === 'failed' && "border-red-500/40 text-red-400 hover:bg-red-500/10",
+                        rec.status === 'missing' && "border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
                       )}
-                      title={rec.status === 'failed' ? 'Corrupted take (quarantined)' : (isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take')}
+                      title={
+                        rec.status === 'missing'
+                          ? 'Media file missing from storage'
+                          : rec.status === 'failed'
+                          ? 'Corrupted take (quarantined)'
+                          : (isSelected ? (isPlaying ? 'Pause' : 'Resume Take') : 'Play Take')
+                      }
                     >
-                      {rec.status === 'failed' ? (
+                      {rec.status === 'missing' ? (
+                        <AlertTriangle className="w-3 h-3 text-amber-400" />
+                      ) : rec.status === 'failed' ? (
                         <AlertCircle className="w-3 h-3 text-red-400" />
                       ) : isSelected && isPlaying ? (
                         <Pause className="w-3 h-3" />
@@ -1506,7 +1527,8 @@ export function RecordingArchive({
                         className={cn(
                           "text-[9px] font-mono uppercase px-1.5 py-0 h-4 shrink-0 flex items-center gap-1",
                           rec.status === 'recording' && "bg-red-500/20 text-red-400 border-red-500/30",
-                          rec.status === 'failed' && "bg-red-950/80 text-red-300 border-red-500/40 font-bold"
+                          rec.status === 'failed' && "bg-red-950/80 text-red-300 border-red-500/40 font-bold",
+                          rec.status === 'missing' && "bg-amber-950/80 text-amber-300 border-amber-500/40 font-bold"
                         )}
                       >
                         {rec.status === 'recording' && (
@@ -1515,7 +1537,10 @@ export function RecordingArchive({
                         {rec.status === 'failed' && (
                           <AlertCircle className="w-2.5 h-2.5 text-red-400" />
                         )}
-                        <span>{rec.status === 'failed' ? 'CORRUPT' : rec.status.toUpperCase()}</span>
+                        {rec.status === 'missing' && (
+                          <AlertTriangle className="w-2.5 h-2.5 text-amber-400" />
+                        )}
+                        <span>{rec.status === 'failed' ? 'CORRUPT' : rec.status === 'missing' ? 'MISSING' : rec.status.toUpperCase()}</span>
                       </Badge>
                       {rec.is_optimized && (
                         <Badge variant="outline" className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold px-1.5 py-0 h-4 flex items-center gap-1 shrink-0">

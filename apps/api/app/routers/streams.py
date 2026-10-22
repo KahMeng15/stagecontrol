@@ -419,21 +419,30 @@ def list_event_recordings(
     )
 
     valid_recordings = []
-    has_orphans = False
+    has_changes = False
     for r in recordings:
         if r.filename.endswith(".faststart_tmp.mp4") or ".tmp" in r.filename:
             db.delete(r)
-            has_orphans = True
+            has_changes = True
             continue
         file_path = (RECORDINGS_DIR / r.filename).resolve()
         if not file_path.exists():
             alt_path = Path("/storage/recordings") / r.filename
             if not alt_path.exists():
-                db.delete(r)
-                has_orphans = True
+                # Soft-delete safeguard: Keep DB entry, markers, and subtitles intact
+                if r.status != "missing":
+                    r.status = "missing"
+                    has_changes = True
+                valid_recordings.append(r)
                 continue
+            elif r.status == "missing":
+                r.status = "ready"
+                has_changes = True
+        elif r.status == "missing":
+            r.status = "ready"
+            has_changes = True
         valid_recordings.append(r)
-    if has_orphans:
+    if has_changes:
         db.commit()
 
     results = []
