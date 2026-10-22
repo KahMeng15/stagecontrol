@@ -60,6 +60,8 @@ storage/walkie_talkie/*
 !storage/walkie_talkie/.gitkeep
 storage/walkie_recordings/*
 !storage/walkie_recordings/.gitkeep
+storage/models/*
+!storage/models/.gitkeep
 apps/storage/
 
 # Audio Media Files
