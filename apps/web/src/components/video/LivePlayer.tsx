@@ -348,11 +348,11 @@ export function LivePlayer({
   const currentStreamUrl = isLive && streamStatus && hasStartedPlayback
     ? playerMode === 'webrtc'
       ? effectiveQuality === 'low' && streamStatus.webrtc_low_url
-        ? `${streamStatus.webrtc_low_url}/?controls=1&autoplay=1&muted=1`
-        : `${streamStatus.webrtc_url}/?controls=1&autoplay=1&muted=1`
+        ? `${streamStatus.webrtc_low_url.replace(/\/$/, '')}/?controls=1&autoplay=1&muted=1`
+        : `${(streamStatus.webrtc_url || '').replace(/\/$/, '')}/?controls=1&autoplay=1&muted=1`
       : effectiveQuality === 'low' && streamStatus.hls_low_url
-        ? `${streamStatus.hls_low_url}/?controls=1&autoplay=1&muted=1`
-        : `${streamStatus.hls_url}/?controls=1&autoplay=1&muted=1`
+        ? `${streamStatus.hls_low_url.replace(/\/$/, '')}/?controls=1&autoplay=1&muted=1`
+        : `${(streamStatus.hls_url || '').replace(/\/$/, '')}/?controls=1&autoplay=1&muted=1`
     : null;
 
   // Native HLS playback setup with hls.js (only initializes and buffers when user has clicked to play)
@@ -796,7 +796,7 @@ export function LivePlayer({
           ) : currentStreamUrl ? (
             <iframe
               ref={iframeRef}
-              key={`webrtc-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
+              key={`webrtc-${effectiveQuality}-${streamStatus?.ready_time || 'initial'}-${reloadKey}`}
               src={currentStreamUrl}
               title="StageControl Program Feed"
               className="w-full h-full border-0 bg-black absolute inset-0"
