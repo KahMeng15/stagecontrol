@@ -528,7 +528,7 @@ class TranscriptionService:
                 if not blocks:
                     return
 
-                curr_block_id = event_active_blocks.get(event_id)
+                curr_block_id = event_active_blocks.get(event_id) or getattr(active_script, "active_block_id", None)
                 curr_idx = None
                 if curr_block_id:
                     for b in blocks:

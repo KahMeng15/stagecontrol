@@ -596,7 +596,7 @@ export function getWebSocketUrl(path: string): string {
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.hostname;
 
-  if ((host === 'localhost' || host === '127.0.0.1') && window.location.port === '3000') {
+  if (window.location.port === '3000') {
     return `${wsProtocol}//${host}:8000${cleanPath}${tokenQuery}`;
   }
 

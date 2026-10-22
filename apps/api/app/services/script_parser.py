@@ -483,8 +483,25 @@ def match_spoken_text_to_script(
         if time_since_last_match < global_search_delay_seconds:
             return ScriptMatchResult(None, 0.0, False)
     else:
-        # If current_block_index is None and allow_jump is False, do NOT allow distant jumps across scenes
+        # If current_block_index is None and allow_jump is False, match opening lines (start of script)
         if not allow_jump:
+            best_init_block = None
+            best_init_score = 0.0
+            for blk in blocks:
+                order_idx = getattr(blk, "order_index", 0) if not isinstance(blk, dict) else blk.get("order_index", 0)
+                if order_idx > local_window_size:
+                    continue
+                diag = getattr(blk, "dialogue", None) if not isinstance(blk, dict) else blk.get("dialogue")
+                cue = getattr(blk, "cue", None) if not isinstance(blk, dict) else blk.get("cue")
+                target_text = f"{diag or ''} {cue or ''}".strip()
+                if not target_text or len(target_text) < 3:
+                    continue
+                raw_score = calculate_script_similarity(spoken_text, target_text)
+                if raw_score > best_init_score:
+                    best_init_score = raw_score
+                    best_init_block = blk
+            if best_init_score >= threshold and best_init_block is not None:
+                return ScriptMatchResult(best_init_block, min(1.0, best_init_score), is_local=True)
             return ScriptMatchResult(None, 0.0, False)
 
         words = [w for w in normalize_script_text(spoken_text).split() if len(w) > 1]

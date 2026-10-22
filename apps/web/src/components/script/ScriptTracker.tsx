@@ -650,9 +650,6 @@ export default function ScriptTracker({
                   if (currIdx >= 0 && targetIdx >= 0 && Math.abs(targetIdx - currIdx) > 5) {
                     return;
                   }
-                  if (currIdx < 0) {
-                    return;
-                  }
                 }
 
                 setActiveBlockId(data.block_id);
@@ -784,6 +781,32 @@ export default function ScriptTracker({
                   if (timeSinceLastMatch < 3.0) {
                     return;
                   }
+                } else {
+                  // If no block selected yet, match the opening scene (lines 0 to 5)
+                  const endIdx = Math.min(currentBlocks.length - 1, 5);
+                  for (let i = 0; i <= endIdx; i++) {
+                    const blk = currentBlocks[i];
+                    const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
+                    if (!targetText) continue;
+
+                    let score = computeSimilarity(spoken, targetText, normSpk, spkWords);
+                    if (score > bestLocalScore) {
+                      bestLocalScore = score;
+                      bestLocalMatch = blk;
+                    }
+                  }
+
+                  if (bestLocalMatch && bestLocalScore >= thresholdFraction) {
+                    setActiveBlockId(bestLocalMatch.id);
+                    setLastConfidence(Math.min(1.0, bestLocalScore));
+                    setLastMatchedSpoken(spoken);
+                    lastMatchTimeRef.current = Date.now();
+
+                    if (selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== bestLocalMatch.section_id) {
+                      setSelectedSectionId('all');
+                    }
+                    return;
+                  }
                 }
 
                 // Step 2: Global Fallback (strictly requires autoJump to be enabled)
@@ -871,23 +894,26 @@ export default function ScriptTracker({
 
   // Smooth auto-scroll directly inside the script container
   useEffect(() => {
-    if (autoFollow && activeBlockRef.current && listContainerRef.current) {
-      const frameId = requestAnimationFrame(() => {
-        if (!activeBlockRef.current || !listContainerRef.current) return;
-        const container = listContainerRef.current;
-        const element = activeBlockRef.current;
-        const containerRect = container.getBoundingClientRect();
-        const elementRect = element.getBoundingClientRect();
-        const relativeTop = elementRect.top - containerRect.top;
-        const targetScrollTop =
-          container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
-        container.scrollTo({
-          top: Math.max(0, targetScrollTop),
-          behavior: 'smooth',
-        });
+    if (!autoFollow || !activeBlockId) return;
+
+    const timer = setTimeout(() => {
+      const container = listContainerRef.current;
+      if (!container) return;
+      const element = activeBlockRef.current || (container.querySelector(`[data-block-id="${activeBlockId}"]`) as HTMLElement);
+      if (!element) return;
+
+      const containerRect = container.getBoundingClientRect();
+      const elementRect = element.getBoundingClientRect();
+      const relativeTop = elementRect.top - containerRect.top;
+      const targetScrollTop =
+        container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
+      container.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: 'smooth',
       });
-      return () => cancelAnimationFrame(frameId);
-    }
+    }, 40);
+
+    return () => clearTimeout(timer);
   }, [activeBlockId, autoFollow]);
 
   // Jump to specific block manually
@@ -1482,6 +1508,7 @@ export default function ScriptTracker({
             return (
               <div
                 key={block.id}
+                data-block-id={block.id}
                 ref={isActive ? activeBlockRef : null}
                 onClick={() => handleJumpToBlock(block)}
                 className={`group relative flex items-start transition-colors cursor-pointer px-3 py-1.5 md:py-2 ${
