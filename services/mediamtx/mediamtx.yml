@@ -53,9 +53,10 @@ paths:
     source: publisher
     recordDeleteAfter: 0s  # Disables automatic deletion globally
 
-  # Transcoded low-res streams (do not re-transcode or record)
-  ~^live/(?P<key>[^/]+)_low$:
+  # Transcoded low-res streams (sorted before ~^live/(?P<key>...) so it is never re-transcoded or recorded)
+  ~^live/(.*_low)$:
     source: publisher
+    record: no
 
   # Live streams with automated fMP4 recording to persistent volume
   ~^live/(?P<key>[^/]+)$:
@@ -69,23 +70,24 @@ paths:
 
     # Automatically generate low-bandwidth 720p @ 800kbps live rendition:
     runOnAvailable: >
-      ffmpeg -hide_banner -loglevel warning
-      -i rtmp://localhost:1935/live/$key
+      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac;
+      exec ffmpeg -hide_banner -loglevel warning
+      -i rtmp://localhost:1935/$MTX_PATH
       -vf "scale=1280:720"
       -c:v libx264 -preset veryfast -tune zerolatency
       -b:v 800k -maxrate 950k -bufsize 1600k
       -g 60 -keyint_min 60 -sc_threshold 0
       -c:a aac -b:a 64k -ar 44100
-      -f flv rtmp://localhost:1935/live/${key}_low
+      -f flv rtmp://localhost:1935/${MTX_PATH}_low'
     runOnAvailableRestart: yes
 
     # Phase 1: Automated stream end hook (notifies FastAPI when publisher disconnects)
     runOnOffline: >
-      sh -c 'KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
+      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
 
     # Triggers pipeline when recorded segment file is finalized and closed on disk
     runOnRecordSegmentComplete: >
-      sh -c 'KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
+      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
 
 
 
