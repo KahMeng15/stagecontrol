@@ -185,3 +185,39 @@ body {
     @apply font-sans;
   }
 }
+
+/* Video.js Modern StageControl Dark Theme */
+.video-js {
+  font-family: inherit;
+  border-radius: 0.75rem;
+}
+.video-js .vjs-big-play-button {
+  background-color: rgba(37, 99, 235, 0.9) !important;
+  border: none !important;
+  border-radius: 50% !important;
+  width: 4rem !important;
+  height: 4rem !important;
+  line-height: 4rem !important;
+  margin-top: -2rem !important;
+  margin-left: -2rem !important;
+  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.5) !important;
+  transition: transform 0.2s ease, background-color 0.2s ease !important;
+}
+.video-js:hover .vjs-big-play-button {
+  background-color: #2563eb !important;
+  transform: scale(1.08);
+}
+.video-js .vjs-control-bar {
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.6) 60%, transparent) !important;
+  height: 3.5rem !important;
+}
+.video-js .vjs-play-progress {
+  background-color: #3b82f6 !important;
+}
+.video-js .vjs-slider {
+  background-color: rgba(255, 255, 255, 0.2) !important;
+  border-radius: 4px !important;
+}
+.video-js .vjs-progress-holder {
+  overflow: visible !important;
+}

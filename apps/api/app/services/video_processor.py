@@ -427,7 +427,6 @@ def check_video_stream_integrity(file_path: Path) -> dict:
         sample_offsets = [0, file_size // 4, file_size // 2, (3 * file_size) // 4]
         total_sample_bytes = 0
         total_ff_bytes = 0
-        max_consecutive_ff = 0
 
         with open(file_path, "rb") as f:
             for offset in sample_offsets:
@@ -437,17 +436,15 @@ def check_video_stream_integrity(file_path: Path) -> dict:
                     total_sample_bytes += len(chunk)
                     ff_count = chunk.count(b"\xff")
                     total_ff_bytes += ff_count
-                    # Check for large contiguous block of 0xFF
-                    if b"\xff" * 256 in chunk:
-                        max_consecutive_ff = max(max_consecutive_ff, 256)
 
         if total_sample_bytes > 0:
             ff_ratio = total_ff_bytes / total_sample_bytes
             result["ff_ratio"] = round(ff_ratio, 4)
-            # Random high-entropy H.264 data has ~0.39% 0xFF bytes. Above 25% indicates uninitialized wipeout.
-            if ff_ratio > 0.25 or max_consecutive_ff >= 256:
+            # True uninitialized buffer wipeouts have >85% 0xFF across all bitstream samples without valid NAL structure.
+            # Standard H.264 CBR encoders legitimately generate NAL unit 12 filler data filled with 0xFF.
+            if ff_ratio > 0.85:
                 result["wipeout_0xff_detected"] = True
-                result["corruption_ratio"] = round(min(1.0, ff_ratio * 2.0), 3)
+                result["corruption_ratio"] = 1.0
                 result["status"] = "severe_corruption"
                 result["is_corrupted"] = True
                 result["error_message"] = f"Detected upstream packet drop: {ff_ratio * 100:.1f}% frames wiped with 0xFF"

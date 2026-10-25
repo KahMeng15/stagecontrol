@@ -386,13 +386,15 @@ def format_friendly_recording_title(file_stem: str, file_mtime: datetime | None 
 @router.get("/recordings", response_model=list[RecordingResponse])
 def list_event_recordings(
     request: Request,
+    background_tasks: BackgroundTasks,
     event_and_member: tuple[Event, Membership] = Depends(require_event_access),
     db: Session = Depends(get_db)
 ):
     """
     Lists all recorded sessions for this event.
-    Automatically scans the filesystem directory (storage/recordings/live/{stream_key})
-    and registers any newly created recording files into the database.
+    Instantly returns all indexed takes from database and quickly scans the
+    filesystem directory (storage/recordings/live/{stream_key}) for any new takes,
+    offloading heavy post-processing / transcoding to background tasks.
     """
     event, _ = event_and_member
     stream_key = event.stream_key
@@ -408,12 +410,12 @@ def list_event_recordings(
     except Exception:
         is_live = False
 
-    # Disk scan for new files
+    # Disk scan for new files (fast metadata only, no blocking FFmpeg subprocesses)
     event_rec_dir = RECORDINGS_DIR / "live" / stream_key
     if event_rec_dir.exists() and event_rec_dir.is_dir():
         import re
-        from datetime import timedelta
         now_utc = datetime.now(timezone.utc)
+        needs_post_process = False
 
         for file in event_rec_dir.glob("*.mp4"):
             if ".tmp" in file.name or ".part" in file.name or ".faststart" in file.name or file.name.endswith("_720p.mp4"):
@@ -448,22 +450,13 @@ def list_event_recordings(
                 if existing and existing.status == "failed":
                     rec_status = "failed"
                     duration = existing.duration_seconds
+                elif existing and existing.status == "ready" and existing.duration_seconds > 0.0:
+                    rec_status = "ready"
+                    duration = existing.duration_seconds
                 else:
                     rec_status = "ready"
-                    if not existing or existing.duration_seconds <= 0.0 or existing.status != "ready":
-                        from app.services.video_processor import repair_corrupted_mvhd, check_video_stream_integrity
-                        repair_corrupted_mvhd(file)
-                        integrity = check_video_stream_integrity(file)
-                        if integrity.get("status") == "severe_corruption":
-                            rec_status = "failed"
-                            if "(Corrupted stream)" not in friendly_title:
-                                friendly_title = f"{friendly_title} (Corrupted stream)"
-                            duration = 0.0
-                        else:
-                            meta = probe_video_metadata(file)
-                            duration = meta.get("duration") or max(0.0, (mtime - start_dt).total_seconds())
-                    else:
-                        duration = existing.duration_seconds
+                    duration = existing.duration_seconds if (existing and existing.duration_seconds > 0.0) else max(0.0, (mtime - start_dt).total_seconds())
+                    needs_post_process = True
 
             # Check if an optimized 720p proxy exists on disk
             proxy_file = file.with_name(f"{file.stem}_720p.mp4")
@@ -473,7 +466,6 @@ def list_event_recordings(
                 proxy_rel = f"live/{stream_key}/{proxy_file.name}"
                 proxy_size = proxy_file.stat().st_size
 
-            rec_target = None
             if not existing:
                 new_rec = Recording(
                     event_id=event.id,
@@ -488,37 +480,24 @@ def list_event_recordings(
                     is_optimized=1 if proxy_rel else 0
                 )
                 db.add(new_rec)
-                db.flush()
-                rec_target = new_rec
             else:
-                existing.duration_seconds = round(duration, 1)
+                if existing.status != "failed":
+                    existing.status = rec_status
+                if duration > 0.0 and existing.duration_seconds <= 0.0:
+                    existing.duration_seconds = round(duration, 1)
                 existing.file_size_bytes = file_size
-                existing.status = rec_status
                 if proxy_rel:
                     existing.proxy_filename = proxy_rel
                     existing.proxy_size_bytes = proxy_size
                     existing.is_optimized = 1
                 if existing.title.startswith("Recording - 202") or existing.title.startswith("Take - 202"):
                     existing.title = friendly_title
-                rec_target = existing
-
-            # Link all subtitles within this recording's time window
-            if rec_target and rec_status == "ready":
-                window_subs = db.query(Subtitle).filter(
-                    Subtitle.event_id == event.id,
-                    Subtitle.created_at >= start_dt - timedelta(seconds=2),
-                    Subtitle.created_at <= mtime + timedelta(seconds=5)
-                ).all()
-                for s in window_subs:
-                    if s.recording_id != rec_target.id:
-                        s.recording_id = rec_target.id
-                    if s.created_at:
-                        s_dt = s.created_at if s.created_at.tzinfo else s.created_at.replace(tzinfo=timezone.utc)
-                        diff = max(0.0, (s_dt - start_dt).total_seconds())
-                        s.start_seconds = round(diff, 1)
-                        s.end_seconds = round(diff + 3.0, 1)
 
         db.commit()
+
+        if needs_post_process:
+            from app.services.video_processor import post_process_all_event_recordings
+            background_tasks.add_task(post_process_all_event_recordings, event.id)
 
     recordings = (
         db.query(Recording)

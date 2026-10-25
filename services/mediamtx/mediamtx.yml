@@ -92,11 +92,11 @@ paths:
 
     # Phase 1: Automated stream end hook (notifies FastAPI when publisher disconnects)
     runOnOffline: >
-      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
+      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
 
     # Triggers pipeline when recorded segment file is finalized and closed on disk
     runOnRecordSegmentComplete: >
-      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
+      sh -c 'case "$MTX_PATH" in *_low) exit 0 ;; esac; KEY=$(basename "$MTX_PATH"); wget -qO- --post-data="" http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || curl -s -X POST http://api:8000/api/events/by-stream-key/$KEY/post-process-recordings || true'
 
 
 

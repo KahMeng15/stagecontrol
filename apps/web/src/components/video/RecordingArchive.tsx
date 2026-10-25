@@ -6,7 +6,6 @@ import {
   Play,
   Pause,
   RotateCcw,
-  RotateCw,
   Download,
   Trash2,
   Edit2,
@@ -14,8 +13,6 @@ import {
   X,
   Volume2,
   VolumeX,
-  Maximize,
-  Minimize,
   RefreshCw,
   Calendar,
   HardDrive,
@@ -35,6 +32,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, Recording, VideoMarker, SubtitleItem } from '@/lib/api';
+import { VideoPlayer, VideoPlayerRef } from '@/components/video/VideoPlayer';
 import ScriptTracker from '@/components/script/ScriptTracker';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -76,14 +74,9 @@ export function RecordingArchive({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
-  const [volume, setVolume] = useState(1);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [isFullscreen, setIsFullscreen] = useState(false);
   const [autoPlayNext, setAutoPlayNext] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
   const [isBuffering, setIsBuffering] = useState(false);
-  const [bufferedProgress, setBufferedProgress] = useState(0);
   const [optimizingId, setOptimizingId] = useState<string | null>(null);
   const [replayQuality, setReplayQuality] = useState<'proxy' | 'source'>('proxy');
   const lastPlayedTimeRef = useRef<number>(0);
@@ -127,7 +120,7 @@ export function RecordingArchive({
   // Delete modal state
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const videoPlayerRef = useRef<VideoPlayerRef>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
 
   const loadMarkers = useCallback(async () => {
@@ -165,7 +158,7 @@ export function RecordingArchive({
   }, [loadMarkers, loadSubtitles]);
 
   const handleOpenAddChapter = () => {
-    const t = videoRef.current ? videoRef.current.currentTime : currentTime;
+    const t = videoPlayerRef.current ? videoPlayerRef.current.currentTime() : currentTime;
     setChapterTime(Math.round(t * 10) / 10);
     setChapterTitle('');
     setChapterDescription('');
@@ -205,18 +198,18 @@ export function RecordingArchive({
   };
 
   const handleJumpToMarker = (seconds: number | null | undefined) => {
-    if (seconds === null || seconds === undefined || !videoRef.current) return;
-    videoRef.current.currentTime = seconds;
+    if (seconds === null || seconds === undefined) return;
+    videoPlayerRef.current?.seek(seconds);
     setCurrentTime(seconds);
-    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    videoPlayerRef.current?.play();
   };
 
   const handleJumpToSubtitle = (seconds: number | null | undefined) => {
-    if (seconds === null || seconds === undefined || !videoRef.current) return;
+    if (seconds === null || seconds === undefined) return;
     const target = Math.max(0, seconds);
-    videoRef.current.currentTime = target;
+    videoPlayerRef.current?.seek(target);
     setCurrentTime(target);
-    videoRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+    videoPlayerRef.current?.play();
   };
 
   const getAuthenticatedUrl = useCallback((url: string | null | undefined) => {
@@ -235,7 +228,10 @@ export function RecordingArchive({
       const data = await api.listRecordings(eventId);
       setRecordings(data);
       setSelectedRecording((prev) => {
-        if (!prev) return data.length > 0 ? data[0] : null;
+        if (!prev) {
+          const firstReady = data.find((r) => r.status === 'ready');
+          return firstReady || (data.length > 0 ? data[0] : null);
+        }
         return data.find((r) => r.id === prev.id) || prev;
       });
     } catch (err: unknown) {
@@ -255,22 +251,14 @@ export function RecordingArchive({
       setCurrentTime(0);
       setVideoError(null);
       setIsBuffering(false);
-      setBufferedProgress(0);
       // Fallback to verified database duration immediately so timeline never displays 00:00 or NaN
       if (selectedRecording.duration_seconds && selectedRecording.duration_seconds > 0) {
         setDuration(selectedRecording.duration_seconds);
       } else {
         setDuration(0);
       }
-      if (autoPlayNext && videoRef.current) {
-        videoRef.current
-          .play()
-          .then(() => setIsPlaying(true))
-          .catch((err: unknown) => {
-            if (err instanceof Error && err.name === 'AbortError') return;
-            console.error("Playback start error:", err);
-            setIsPlaying(false);
-          });
+      if (autoPlayNext && videoPlayerRef.current) {
+        videoPlayerRef.current.play();
         setAutoPlayNext(false);
       }
     }
@@ -278,11 +266,11 @@ export function RecordingArchive({
 
   // Video event handlers
   const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const cur = videoRef.current.currentTime;
+    if (videoPlayerRef.current) {
+      const cur = videoPlayerRef.current.currentTime();
       setCurrentTime(cur);
       lastPlayedTimeRef.current = cur;
-      const d = videoRef.current.duration;
+      const d = videoPlayerRef.current.duration();
       if (d && !isNaN(d) && isFinite(d) && d > 0) {
         setDuration(d);
       }
@@ -290,50 +278,37 @@ export function RecordingArchive({
   };
 
   const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      const d = videoRef.current.duration;
+    if (videoPlayerRef.current) {
+      const d = videoPlayerRef.current.duration();
       if (d && !isNaN(d) && isFinite(d) && d > 0) {
         setDuration(d);
       } else if (selectedRecording?.duration_seconds && selectedRecording.duration_seconds > 0) {
         setDuration(selectedRecording.duration_seconds);
-      }
-      if (lastPlayedTimeRef.current > 0 && lastPlayedTimeRef.current < (videoRef.current.duration || Infinity)) {
-        videoRef.current.currentTime = lastPlayedTimeRef.current;
       }
       setIsBuffering(false);
     }
   };
 
   const handleProgress = () => {
-    if (videoRef.current) {
-      const d = duration || selectedRecording?.duration_seconds || 0;
-      if (d > 0) {
-        const buf = videoRef.current.buffered;
-        if (buf.length > 0) {
-          const end = buf.end(buf.length - 1);
-          setBufferedProgress(Math.min(100, Math.max(0, (end / d) * 100)));
-        }
-      }
-    }
+    // Handled by Video.js
   };
 
   const handleRetryPlayback = () => {
-    if (!videoRef.current) return;
+    if (!videoPlayerRef.current) return;
     setVideoError(null);
     setIsBuffering(true);
-    videoRef.current.load();
-    videoRef.current.currentTime = currentTime;
-    videoRef.current
-      .play()
-      .then(() => {
+    videoPlayerRef.current.seek(currentTime);
+    const p = videoPlayerRef.current.play();
+    if (p && typeof p.then === 'function') {
+      p.then(() => {
         setIsPlaying(true);
         setIsBuffering(false);
-      })
-      .catch((e) => {
+      }).catch((e) => {
         console.error("Retry playback error:", e);
         setVideoError("Unable to resume playback. Please verify connection or retry.");
         setIsBuffering(false);
       });
+    }
   };
 
   const handleOptimizeTake = async (recId: string) => {
@@ -356,101 +331,14 @@ export function RecordingArchive({
   };
 
   const togglePlay = () => {
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      videoRef.current
-        .play()
-        .then(() => {
-          setIsPlaying(true);
-          setVideoError(null);
-          setIsBuffering(false);
-        })
-        .catch((err) => {
-          if (err instanceof Error && (err.name === 'AbortError' || err.message.includes('interrupted'))) {
-            return;
-          }
-          console.error("Playback error:", err);
-          setVideoError("Unable to play video take. Click retry or Auto-Fix.");
-          setIsPlaying(false);
-          setIsBuffering(false);
-        });
+    if (!videoPlayerRef.current) return;
+    if (videoPlayerRef.current.isPaused()) {
+      videoPlayerRef.current.play();
+      setIsPlaying(true);
+      setVideoError(null);
     } else {
-      videoRef.current.pause();
+      videoPlayerRef.current.pause();
       setIsPlaying(false);
-    }
-  };
-
-  const seekRelative = (seconds: number) => {
-    if (!videoRef.current) return;
-    videoRef.current.currentTime = Math.max(
-      0,
-      Math.min(videoRef.current.duration || 0, videoRef.current.currentTime + seconds)
-    );
-  };
-
-  const handleSeekChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setCurrentTime(val);
-    if (videoRef.current) {
-      videoRef.current.currentTime = val;
-    }
-  };
-
-  const toggleMute = () => {
-    if (!videoRef.current) return;
-    const next = !isMuted;
-    videoRef.current.muted = next;
-    setIsMuted(next);
-  };
-
-  const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setVolume(val);
-    if (videoRef.current) {
-      videoRef.current.volume = val;
-      if (val > 0 && isMuted) {
-        videoRef.current.muted = false;
-        setIsMuted(false);
-      }
-    }
-  };
-
-  // Audio ducking & muting for Walkie-Talkie comms
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    if (isSpeaker) {
-      // SPEAKER: Mute playback completely to avoid mic feedback
-      video.muted = true;
-    } else if (isListener) {
-      // LISTENER: Duck volume down by 50%
-      if (!isMuted) {
-        video.muted = false;
-        video.volume = Math.max(0, Math.min(1, volume * 0.5));
-      }
-    } else {
-      // NORMAL: Restore original volume & muted state
-      video.muted = isMuted;
-      video.volume = volume;
-    }
-  }, [isSpeaker, isListener, isMuted, volume]);
-
-  const changePlaybackRate = (rate: number) => {
-    setPlaybackRate(rate);
-    if (videoRef.current) {
-      videoRef.current.playbackRate = rate;
-    }
-  };
-
-  const toggleFullscreen = () => {
-    if (!playerContainerRef.current) return;
-    if (!document.fullscreenElement) {
-      playerContainerRef.current.requestFullscreen().catch(() => {});
-      setIsFullscreen(true);
-    } else {
-      document.exitFullscreen().catch(() => {});
-      setIsFullscreen(false);
     }
   };
 
@@ -605,6 +493,17 @@ export function RecordingArchive({
 
                 <Button
                   size="xs"
+                  variant={showReplayCC ? "default" : "secondary"}
+                  onClick={() => setShowReplayCC((prev) => !prev)}
+                  className="gap-1.5 text-[11px]"
+                  title={showReplayCC ? "Hide Closed Captions" : "Show Closed Captions"}
+                >
+                  <Subtitles className="w-3.5 h-3.5" />
+                  <span>CC</span>
+                </Button>
+
+                <Button
+                  size="xs"
                   variant="secondary"
                   onClick={handleOpenAddChapter}
                   className="gap-1.5 text-[11px]"
@@ -736,47 +635,45 @@ export function RecordingArchive({
                 </div>
               )}
 
-              <video
-                ref={videoRef}
+              <VideoPlayer
+                ref={videoPlayerRef}
                 key={selectedRecording.id}
                 src={getAuthenticatedUrl(getReplayStreamUrl(selectedRecording, replayQuality))}
-                playsInline
-                preload="metadata"
-                className="w-full h-full object-contain cursor-pointer"
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onProgress={handleProgress}
-                onWaiting={() => setIsBuffering(true)}
-                onPlaying={() => {
+                fallbackDuration={selectedRecording.duration_seconds || duration}
+                markers={[
+                  ...markers.map((m) => ({
+                    id: m.id,
+                    title: m.title,
+                    timestamp_seconds: m.timestamp_seconds || 0,
+                    color: m.color,
+                  })),
+                  ...recordSubtitles
+                    .filter((s) => s.is_music && s.start_seconds !== null && s.start_seconds !== undefined)
+                    .map((p) => ({
+                      id: `perf-${p.id || p.start_seconds}`,
+                      title: `🎵 ${p.text}`,
+                      timestamp_seconds: p.start_seconds || 0,
+                      color: 'amber',
+                    })),
+                ]}
+                onTimeUpdate={(cur, dur) => {
+                  setCurrentTime(cur);
+                  if (dur && dur > 0) setDuration(dur);
+                }}
+                onPlay={() => {
                   setIsPlaying(true);
                   setIsBuffering(false);
                   setVideoError(null);
                 }}
-                onCanPlay={() => setIsBuffering(false)}
-                onCanPlayThrough={() => setIsBuffering(false)}
-                onLoadedData={() => setIsBuffering(false)}
-                onSeeked={() => setIsBuffering(false)}
                 onPause={() => setIsPlaying(false)}
-                onError={(e) => {
-                  const mediaErr = (e.currentTarget as HTMLVideoElement)?.error;
-                  console.error("Video error event:", {
-                    code: mediaErr?.code,
-                    message: mediaErr?.message,
-                    src: e.currentTarget?.currentSrc || e.currentTarget?.src,
-                  });
-                  let detail = "Playback interrupted. Click Retry or Auto-Fix.";
-                  if (mediaErr?.code === 4) {
-                    detail = "Container format error (unindexed or corrupt box). Click 'Auto-Fix Take' to repair.";
-                  } else if (mediaErr?.code === 2) {
-                    detail = "Network error loading video slice. Click Retry to reconnect.";
-                  } else if (mediaErr?.message) {
-                    detail = `${mediaErr.message}. Click 'Auto-Fix Take' to repair.`;
-                  }
-                  setVideoError(detail);
+                onError={(err: unknown) => {
+                  console.error("Video player error:", err);
+                  setVideoError("Playback encountered an error. Click Retry or Auto-Fix.");
                   setIsPlaying(false);
                   setIsBuffering(false);
                 }}
-                onClick={togglePlay}
+                onJumpToMarker={handleJumpToMarker}
+                className="w-full h-full"
               />
 
               {/* Replay Closed Captions Overlay */}
@@ -798,227 +695,6 @@ export function RecordingArchive({
                   </div>
                 );
               })()}
-
-              {/* Big Play Overlay if paused */}
-              {!isPlaying && !isBuffering && (
-                <button
-                  onClick={togglePlay}
-                  className="absolute inset-0 flex items-center justify-center bg-black/40 hover:bg-black/20 transition-colors z-10"
-                >
-                  <div className="w-16 h-16 rounded-full bg-blue-600/90 hover:bg-blue-600 text-white flex items-center justify-center shadow-xl shadow-blue-600/30 transition-transform transform hover:scale-105">
-                    <Play className="w-7 h-7 ml-1" />
-                  </div>
-                </button>
-              )}
-
-              {/* Floating Bottom Scrubber & Controls */}
-              <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-4 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity flex flex-col gap-2 z-10">
-                {/* Timeline Scrubber with Download Buffer Track & Chapter Markers */}
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-mono text-slate-300 w-12 text-right">
-                    {formatTime(currentTime)}
-                  </span>
-                  <div className="flex-1 relative flex items-center h-6 group/timeline">
-                    {/* Background buffer progress track for slow/patchy 4G */}
-                    <div className="absolute inset-x-0 h-1.5 rounded-lg bg-slate-800 overflow-hidden pointer-events-none">
-                      <div
-                        className="h-full bg-slate-500/50 transition-all duration-300"
-                        style={{ width: `${bufferedProgress}%` }}
-                      />
-                    </div>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(1, duration || selectedRecording?.duration_seconds || 1)}
-                      step={0.5}
-                      value={currentTime}
-                      onChange={handleSeekChange}
-                      className="w-full accent-blue-500 cursor-pointer h-1.5 rounded-lg bg-transparent z-10"
-                    />
-                    {/* Chapter Marker Pins on Timeline Track */}
-                    {(duration > 0 || (selectedRecording?.duration_seconds ?? 0) > 0) &&
-                      markers.map((m) => {
-                        const totalDur = duration || selectedRecording?.duration_seconds || 1;
-                        if (m.timestamp_seconds === null || m.timestamp_seconds === undefined) return null;
-                        const pct = Math.min(100, Math.max(0, (m.timestamp_seconds / totalDur) * 100));
-                        return (
-                          <button
-                            key={m.id}
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleJumpToMarker(m.timestamp_seconds);
-                            }}
-                            style={{ left: `${pct}%` }}
-                            className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 z-20 group/pin flex items-center justify-center focus:outline-none"
-                            title={`${formatTime(m.timestamp_seconds)} - ${m.title}`}
-                          >
-                            <span
-                              className={`w-2.5 h-2.5 rounded-full border border-black shadow-md transition-transform group-hover/pin:scale-150 ${
-                                m.color === 'emerald'
-                                  ? 'bg-emerald-400'
-                                  : m.color === 'amber'
-                                  ? 'bg-amber-400'
-                                  : m.color === 'rose'
-                                  ? 'bg-rose-400'
-                                  : m.color === 'blue'
-                                  ? 'bg-blue-400'
-                                  : 'bg-purple-400'
-                              }`}
-                            />
-                            {/* Tooltip on Hover */}
-                            <div className="absolute bottom-full mb-1.5 hidden group-hover/pin:flex flex-col items-center pointer-events-none whitespace-nowrap z-30">
-                              <div className="bg-[#0b0e17] border border-[#232f48] text-white text-[10px] px-2 py-0.5 rounded shadow-lg flex items-center gap-1.5">
-                                <span className="font-mono text-purple-400 font-bold">{formatTime(m.timestamp_seconds)}</span>
-                                <span className="font-semibold">{m.title}</span>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-
-                    {/* Musical & Performance Pins on Timeline Track (Orange) */}
-                    {(duration > 0 || (selectedRecording?.duration_seconds ?? 0) > 0) &&
-                      recordSubtitles
-                        .filter((s) => s.is_music && s.start_seconds !== null && s.start_seconds !== undefined)
-                        .map((p) => {
-                          const totalDur = duration || selectedRecording?.duration_seconds || 1;
-                          const pct = Math.min(100, Math.max(0, ((p.start_seconds || 0) / totalDur) * 100));
-                          return (
-                            <button
-                              key={`perf-${p.id || p.start_seconds}`}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleJumpToSubtitle(p.start_seconds);
-                              }}
-                              style={{ left: `${pct}%` }}
-                              className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-3.5 h-3.5 z-20 group/perf flex items-center justify-center focus:outline-none"
-                              title={`Performance: ${p.text} (${formatTime(p.start_seconds || 0)})`}
-                            >
-                              <span className="w-2.5 h-2.5 rounded-full border border-black shadow-md bg-orange-400 transition-transform group-hover/perf:scale-150" />
-                              <div className="absolute bottom-full mb-1.5 hidden group-hover/perf:flex flex-col items-center pointer-events-none whitespace-nowrap z-30">
-                                <div className="bg-[#0b0e17] border border-orange-500/40 text-orange-200 text-[10px] px-2 py-0.5 rounded shadow-lg flex items-center gap-1.5">
-                                  <Music className="w-3 h-3 text-orange-400" />
-                                  <span className="font-mono text-orange-400 font-bold">{formatTime(p.start_seconds || 0)}</span>
-                                  <span className="font-semibold truncate max-w-44">{p.text}</span>
-                                </div>
-                              </div>
-                            </button>
-                          );
-                        })}
-                  </div>
-                  <span className="text-[10px] font-mono text-slate-400 w-12 text-left">
-                    {formatTime(duration || selectedRecording?.duration_seconds || 0)}
-                  </span>
-                </div>
-
-                {/* Primary Controls */}
-                <div className="flex items-center justify-between pt-1">
-                  <div className="flex items-center gap-3">
-                    <button
-                      onClick={togglePlay}
-                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-white transition-colors"
-                    >
-                      {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                    </button>
-
-                    <button
-                      onClick={() => seekRelative(-10)}
-                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
-                      title="Skip back 10s"
-                    >
-                      <RotateCcw className="w-4 h-4" />
-                    </button>
-
-                    <button
-                      onClick={() => seekRelative(10)}
-                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
-                      title="Skip forward 10s"
-                    >
-                      <RotateCw className="w-4 h-4" />
-                    </button>
-
-                    {/* Quick Add Chapter */}
-                    <button
-                      onClick={handleOpenAddChapter}
-                      className="p-1.5 rounded-lg bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 transition-colors flex items-center gap-1 text-[11px] font-semibold"
-                      title="Add chapter at current time"
-                    >
-                      <Flag className="w-3.5 h-3.5 text-purple-400" />
-                      <span className="hidden sm:inline">+ Chapter</span>
-                    </button>
-
-                    <div className="flex items-center gap-1.5 ml-2">
-                      <button
-                        onClick={toggleMute}
-                        className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
-                      >
-                        {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4" />}
-                      </button>
-                      <input
-                        type="range"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={isMuted ? 0 : volume}
-                        onChange={handleVolumeChange}
-                        className="w-16 accent-blue-500 cursor-pointer h-1 rounded-lg bg-slate-700"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    {/* Speed Selector */}
-                    <div className="flex items-center gap-1 bg-black/40 rounded-lg p-0.5 border border-slate-700">
-                      {[0.5, 1, 1.5, 2].map((rate) => (
-                        <button
-                          key={rate}
-                          onClick={() => changePlaybackRate(rate)}
-                          className={`text-[10px] px-1.5 py-0.5 rounded ${
-                            playbackRate === rate
-                              ? 'bg-blue-600 text-white font-bold'
-                              : 'text-slate-400 hover:text-slate-200'
-                          }`}
-                        >
-                          {rate}x
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Subtitles (CC) Toggle */}
-                    <button
-                      onClick={() => setShowReplayCC((prev) => !prev)}
-                      className={`p-1.5 rounded-lg text-xs font-bold transition-colors ${
-                        showReplayCC
-                          ? 'bg-purple-600/30 text-purple-300 border border-purple-500/40'
-                          : 'bg-white/10 hover:bg-white/20 text-slate-400'
-                      }`}
-                      title={showReplayCC ? 'Hide Closed Captions' : 'Show Closed Captions'}
-                    >
-                      <Subtitles className="w-4 h-4" />
-                    </button>
-
-                    {/* Download */}
-                    <a
-                      href={getAuthenticatedUrl(selectedRecording.download_url)}
-                      download
-                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
-                      title="Download MP4"
-                    >
-                      <Download className="w-4 h-4" />
-                    </a>
-
-                    {/* Fullscreen */}
-                    <button
-                      onClick={toggleFullscreen}
-                      className="p-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-300 transition-colors"
-                    >
-                      {isFullscreen ? <Minimize className="w-4 h-4" /> : <Maximize className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
             </>
             )
           ) : (
