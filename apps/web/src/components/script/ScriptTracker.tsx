@@ -480,7 +480,7 @@ function DialogueContent({ text, isActive, teleprompterMode }: DialogueContentPr
   }, [text]);
 
   if (segments.length === 0) {
-    return <p className="text-xs text-slate-500 italic">[Stage direction / Musical interlude]</p>;
+    return null;
   }
 
   return (
@@ -492,8 +492,8 @@ function DialogueContent({ text, isActive, teleprompterMode }: DialogueContentPr
               <span
                 className={`font-mono inline-flex items-center px-2 py-0.5 rounded border text-[11px] tracking-wide select-none max-w-full break-words whitespace-normal ${
                   isActive
-                    ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 font-semibold shadow-sm shadow-amber-500/10'
-                    : 'bg-slate-800/80 border-slate-700/80 text-amber-400/90'
+                    ? 'bg-muted/80 border-border text-foreground font-medium'
+                    : 'bg-muted/30 border-border/40 text-muted-foreground'
                 } ${teleprompterMode ? 'text-sm sm:text-base px-3 py-1' : ''}`}
               >
                 <span className="font-mono break-words whitespace-normal">{seg.text}</span>
@@ -649,6 +649,8 @@ export default function ScriptTracker({
 
   const selectedSectionIdRef = useRef(selectedSectionId);
   selectedSectionIdRef.current = selectedSectionId;
+
+  const recentSpokenRef = useRef<{ text: string; time: number } | null>(null);
 
   // Stream status monitoring for auto-follow alert
   useEffect(() => {
@@ -960,39 +962,79 @@ export default function ScriptTracker({
                 let bestLocalMatch: ScriptBlock | null = null;
                 let bestLocalScore = 0;
 
+                const evaluateLocal = (candidateText: string, words: string[], norm: string) => {
+                  let match: ScriptBlock | null = null;
+                  let topScore = 0;
+
+                  if (currIdx >= 0) {
+                    const startIdx = Math.max(0, currIdx - jumpWindowSizeRef.current);
+                    const endIdx = Math.min(currentBlocks.length - 1, currIdx + jumpWindowSizeRef.current);
+
+                    for (let i = startIdx; i <= endIdx; i++) {
+                      const blk = currentBlocks[i];
+                      const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
+                      if (!targetText) continue;
+
+                      let score = computeSimilarity(candidateText, targetText, norm, words);
+                      const diff = blk.order_index - currIdx;
+                      if (diff >= 0 && diff <= 2) score += 0.06;
+                      else if (diff >= 3 && diff <= 5) score += 0.03;
+                      else if (diff >= -2 && diff < 0) score += 0.02;
+
+                      if (score > topScore) {
+                        topScore = score;
+                        match = blk;
+                      }
+                    }
+                  } else {
+                    const endIdx = Math.min(currentBlocks.length - 1, jumpWindowSizeRef.current);
+                    for (let i = 0; i <= endIdx; i++) {
+                      const blk = currentBlocks[i];
+                      const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
+                      if (!targetText) continue;
+
+                      let score = computeSimilarity(candidateText, targetText, norm, words);
+                      if (score > topScore) {
+                        topScore = score;
+                        match = blk;
+                      }
+                    }
+                  }
+                  return { match, score: topScore };
+                };
+
+                const resPrimary = evaluateLocal(spoken, spkWords, normSpk);
+                bestLocalMatch = resPrimary.match;
+                bestLocalScore = resPrimary.score;
+
+                // If primary match was below threshold, evaluate with recent rolling context
+                if (bestLocalScore < thresholdFraction && recentSpokenRef.current && (now - recentSpokenRef.current.time) < 15000) {
+                  const combinedText = `${recentSpokenRef.current.text} ${spoken}`;
+                  const combNorm = normalizeText(combinedText, false);
+                  const combWords = combNorm.split(' ').filter((w) => w.length > 1);
+                  const resComb = evaluateLocal(combinedText, combWords, combNorm);
+                  if (resComb.score > bestLocalScore) {
+                    bestLocalMatch = resComb.match;
+                    bestLocalScore = resComb.score;
+                  }
+                }
+
+                if (bestLocalMatch && bestLocalScore >= thresholdFraction) {
+                  setActiveBlockId(bestLocalMatch.id);
+                  setLastConfidence(Math.min(1.0, bestLocalScore));
+                  setLastMatchedSpoken(spoken);
+                  lastMatchTimeRef.current = Date.now();
+                  recentSpokenRef.current = { text: spoken, time: now };
+
+                  if (selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== bestLocalMatch.section_id) {
+                    setSelectedSectionId('all');
+                  }
+                  return;
+                }
+
+                recentSpokenRef.current = { text: spoken, time: now };
+
                 if (currIdx >= 0) {
-                  const startIdx = Math.max(0, currIdx - jumpWindowSizeRef.current);
-                  const endIdx = Math.min(currentBlocks.length - 1, currIdx + jumpWindowSizeRef.current);
-
-                  for (let i = startIdx; i <= endIdx; i++) {
-                    const blk = currentBlocks[i];
-                    const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
-                    if (!targetText) continue;
-
-                    let score = computeSimilarity(spoken, targetText, normSpk, spkWords);
-                    const diff = blk.order_index - currIdx;
-                    if (diff >= 0 && diff <= 2) score += 0.06;
-                    else if (diff >= 3 && diff <= 5) score += 0.03;
-                    else if (diff >= -2 && diff < 0) score += 0.02;
-
-                    if (score > bestLocalScore) {
-                      bestLocalScore = score;
-                      bestLocalMatch = blk;
-                    }
-                  }
-
-                  if (bestLocalMatch && bestLocalScore >= thresholdFraction) {
-                    setActiveBlockId(bestLocalMatch.id);
-                    setLastConfidence(Math.min(1.0, bestLocalScore));
-                    setLastMatchedSpoken(spoken);
-                    lastMatchTimeRef.current = Date.now();
-
-                    if (selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== bestLocalMatch.section_id) {
-                      setSelectedSectionId('all');
-                    }
-                    return;
-                  }
-
                   // If auto-jump is disabled, strictly lock to ±jumpWindowSize lines (do NOT search or jump beyond)
                   if (!autoJumpRef.current) {
                     return;
@@ -1000,32 +1042,6 @@ export default function ScriptTracker({
 
                   // If no local line matched and less than 3 seconds have passed, DO NOT jump globally
                   if (timeSinceLastMatch < 3.0) {
-                    return;
-                  }
-                } else {
-                  // If no block selected yet, match the opening scene (lines 0 to jumpWindowSize)
-                  const endIdx = Math.min(currentBlocks.length - 1, jumpWindowSizeRef.current);
-                  for (let i = 0; i <= endIdx; i++) {
-                    const blk = currentBlocks[i];
-                    const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
-                    if (!targetText) continue;
-
-                    let score = computeSimilarity(spoken, targetText, normSpk, spkWords);
-                    if (score > bestLocalScore) {
-                      bestLocalScore = score;
-                      bestLocalMatch = blk;
-                    }
-                  }
-
-                  if (bestLocalMatch && bestLocalScore >= thresholdFraction) {
-                    setActiveBlockId(bestLocalMatch.id);
-                    setLastConfidence(Math.min(1.0, bestLocalScore));
-                    setLastMatchedSpoken(spoken);
-                    lastMatchTimeRef.current = Date.now();
-
-                    if (selectedSectionIdRef.current !== 'all' && selectedSectionIdRef.current !== bestLocalMatch.section_id) {
-                      setSelectedSectionId('all');
-                    }
                     return;
                   }
                 }
@@ -1796,7 +1812,6 @@ export default function ScriptTracker({
 
             <div className="flex items-center gap-1.5 flex-1 overflow-x-auto py-0.5">
               <div className="px-2 py-0.5 rounded-md border text-[11px] flex items-center gap-1.5 shrink-0 bg-orange-500/15 border-orange-500/40 text-orange-300 shadow-2xs">
-                <Music className="w-3 h-3 text-orange-400 shrink-0" />
                 <span className="font-mono text-[11px] font-medium whitespace-nowrap truncate max-w-sm sm:max-w-md">
                   {performanceTitle}
                 </span>
@@ -2027,7 +2042,7 @@ export default function ScriptTracker({
                         #{block.order_index + 1}
                       </span>
 
-                      {block.speaker ? (
+                      {block.speaker && (
                         <span
                           className={`px-1.5 py-0 h-4 inline-flex items-center rounded text-[11px] font-semibold capitalize truncate max-w-[180px] border leading-none ${getSpeakerColor(
                             block.speaker
@@ -2036,21 +2051,17 @@ export default function ScriptTracker({
                         >
                           {block.speaker}
                         </span>
-                      ) : (
-                        <span className="text-[11px] text-muted-foreground/60 italic select-none">
-                          Stage / Action
-                        </span>
                       )}
 
                       {/* Persistent Performance Act Badge */}
                       {isPerformanceBlock(block) && (
                         <span
                           onClick={(e) => handleToggleBlockPerformance(e, block)}
-                          className="inline-flex items-center gap-0.5 px-1.5 py-0 h-4 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-2xs cursor-pointer hover:bg-orange-500/25 transition-all leading-none"
+                          className="inline-flex items-center gap-1 px-1.5 py-0 h-4 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-2xs cursor-pointer hover:bg-orange-500/25 transition-all leading-none"
                           title={isSMOrAdmin ? "Performance line (Click to toggle)" : "Live Song / Performance Act"}
                         >
                           <Music className="w-2.5 h-2.5 text-orange-400 shrink-0" />
-                          <span>PERF</span>
+                          <span>PERFORMANCE</span>
                         </span>
                       )}
 
@@ -2112,16 +2123,12 @@ export default function ScriptTracker({
                         </span>
                       )}
 
-                      {isSMOrAdmin && (
+                      {isSMOrAdmin && !block.is_performance && (
                         <button
                           type="button"
                           onClick={(e) => handleToggleBlockPerformance(e, block)}
-                          className={`p-0.5 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
-                            block.is_performance
-                              ? 'text-orange-400 hover:text-orange-300'
-                              : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400'
-                          }`}
-                          title={block.is_performance ? "Remove performance tag" : "Tag line as performance act / musical number"}
+                          className="opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400 p-0.5 rounded text-[10px] transition-all flex items-center gap-1 shrink-0"
+                          title="Tag line as performance act / musical number"
                         >
                           <Music className="w-2.5 h-2.5" />
                         </button>

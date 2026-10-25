@@ -211,97 +211,95 @@ export function BroadcastTranscriptionCard({
         </div>
       </div>
 
-      <div className="p-3 flex flex-col flex-1 min-h-0 relative">
-        {/* Subtitles Feed List Container */}
-        <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl overflow-hidden">
-          <div
-            ref={transcriptContainerRef}
-            onScroll={handleFeedScroll}
-            className="absolute inset-0 overflow-y-auto divide-y divide-border/30 scroll-smooth"
-          >
-            {subtitles.length === 0 ? (
-              <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 text-center space-y-2">
-                <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <p className="text-xs font-semibold text-foreground">Waiting for speech</p>
-                  <p className="text-[11px] text-muted-foreground max-w-xs mt-0.5">
-                    Audio from the live broadcast is transcribed in real-time.
-                  </p>
-                </div>
+      {/* Subtitles Feed List Container (Single unified card matching ScriptTracker) */}
+      <div className="relative flex-1 min-h-0 bg-card overflow-hidden">
+        <div
+          ref={transcriptContainerRef}
+          onScroll={handleFeedScroll}
+          className="absolute inset-0 overflow-y-auto divide-y divide-border/30 scroll-smooth"
+        >
+          {subtitles.length === 0 ? (
+            <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 text-center space-y-2">
+              <div className="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
+                <Sparkles className="w-4 h-4" />
               </div>
-            ) : (
-              subtitles.map((sub, idx) => {
-                const isActive = Boolean(
-                  (activeSubtitleId && (sub.id === activeSubtitleId || sub.text === activeCaption)) ||
-                  (!activeSubtitleId && activeCaption && (sub.text === activeCaption || idx === 0))
-                );
-
-                return (
-                  <div
-                    key={sub.id || idx}
-                    className={cn(
-                      "px-3 py-2 text-xs transition-colors select-none",
-                      isActive
-                        ? "bg-primary/10"
-                        : "hover:bg-muted/40"
-                    )}
-                  >
-                    {/* Top Row: Time (top-left) & Language (top-right) */}
-                    <div className="flex items-center justify-between gap-2">
-                      <span
-                        className={cn(
-                          "text-[10px] font-mono shrink-0",
-                          isActive ? "text-primary font-semibold" : "text-muted-foreground"
-                        )}
-                      >
-                        {formatTimeOnly(sub.created_at)}
-                      </span>
-
-                      <Badge
-                        variant="outline"
-                        className="text-[9px] uppercase font-mono px-1 py-0 h-4 text-muted-foreground shrink-0"
-                      >
-                        {sub.language || 'ms'}
-                      </Badge>
-                    </div>
-
-                    {/* Below: Transcription text */}
-                    <div className="mt-0.5">
-                      <p
-                        className={cn(
-                          "text-xs leading-snug break-words whitespace-normal select-text",
-                          isActive ? "text-primary font-medium" : "text-foreground font-normal"
-                        )}
-                      >
-                        {sub.is_music && (
-                          <Music className="w-3 h-3 text-orange-400 inline mr-1.5 shrink-0 align-sub" />
-                        )}
-                        <span>{sub.text}</span>
-                      </p>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-
-          {/* Floating View Latest Button when user scrolled away */}
-          {isScrolledAway && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-              <Button
-                type="button"
-                size="xs"
-                onClick={scrollToLatest}
-                className="h-7 px-3 text-[11px] shadow-xl bg-primary text-primary-foreground hover:bg-primary/90 rounded-full gap-1.5 font-semibold animate-in fade-in slide-in-from-top-2"
-              >
-                <ArrowUp className="w-3.5 h-3.5" />
-                <span>View Latest</span>
-              </Button>
+              <div>
+                <p className="text-xs font-semibold text-foreground">Waiting for speech</p>
+                <p className="text-[11px] text-muted-foreground max-w-xs mt-0.5">
+                  Audio from the live broadcast is transcribed in real-time.
+                </p>
+              </div>
             </div>
+          ) : (
+            subtitles.map((sub, idx) => {
+              const isActive = Boolean(
+                (activeSubtitleId && (sub.id === activeSubtitleId || sub.text === activeCaption)) ||
+                (!activeSubtitleId && activeCaption && (sub.text === activeCaption || idx === 0))
+              );
+
+              return (
+                <div
+                  key={sub.id || idx}
+                  className={cn(
+                    "px-3 py-2 text-xs transition-colors select-none",
+                    isActive
+                      ? "bg-primary/10"
+                      : "hover:bg-muted/40"
+                  )}
+                >
+                  {/* Top Row: Time (top-left) & Language (top-right) */}
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className={cn(
+                        "text-[10px] font-mono shrink-0",
+                        isActive ? "text-primary font-semibold" : "text-muted-foreground"
+                      )}
+                    >
+                      {formatTimeOnly(sub.created_at)}
+                    </span>
+
+                    <Badge
+                      variant="outline"
+                      className="text-[9px] uppercase font-mono px-1 py-0 h-4 text-muted-foreground shrink-0"
+                    >
+                      {sub.language || 'ms'}
+                    </Badge>
+                  </div>
+
+                  {/* Below: Transcription text */}
+                  <div className="mt-0.5">
+                    <p
+                      className={cn(
+                        "text-xs leading-snug break-words whitespace-normal select-text",
+                        isActive ? "text-primary font-medium" : "text-foreground font-normal"
+                      )}
+                    >
+                      {sub.is_music && (
+                        <Music className="w-3 h-3 text-orange-400 inline mr-1.5 shrink-0 align-sub" />
+                      )}
+                      <span>{sub.text}</span>
+                    </p>
+                  </div>
+                </div>
+              );
+            })
           )}
         </div>
+
+        {/* Floating View Latest Button when user scrolled away */}
+        {isScrolledAway && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+            <Button
+              type="button"
+              size="xs"
+              onClick={scrollToLatest}
+              className="h-7 px-3 text-[11px] shadow-xl bg-primary text-primary-foreground hover:bg-primary/90 rounded-full gap-1.5 font-semibold animate-in fade-in slide-in-from-top-2"
+            >
+              <ArrowUp className="w-3.5 h-3.5" />
+              <span>View Latest</span>
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -451,13 +451,13 @@ export function LivePlayer({
           {/* Mark Moment Button */}
           <Button
             size="xs"
-            variant="secondary"
+            variant="outline"
             onClick={() => setShowMarkModal(true)}
             disabled={!isLive}
             className="gap-1.5 text-[11px] h-7 px-2.5 font-medium"
             title={isLive ? "Add a chapter / moment mark at current live time" : "Mark moment (stream is offline)"}
           >
-            <Flag className="w-3.5 h-3.5 text-primary" />
+            <Flag className="w-3.5 h-3.5" />
             <span>Mark Moment</span>
           </Button>
 

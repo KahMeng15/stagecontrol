@@ -165,6 +165,9 @@ class TranscriptionService:
         # Background monitor task for auto-starting/stopping
         self.monitor_task: asyncio.Task | None = None
 
+        # Rolling spoken context history keyed by event_id: list of {"text": str, "timestamp": float}
+        self.event_spoken_history: dict[str, list[dict]] = {}
+
     @staticmethod
     def resolve_repo_id(model_identifier: str) -> str:
         """Resolves a model id or alias to the exact Hugging Face CTranslate2 repo id."""
@@ -561,6 +564,32 @@ class TranscriptionService:
                 return True
         return False
 
+    @staticmethod
+    def _stitch_sentence_clauses(prev: str, next_chunk: str) -> str:
+        """
+        Stitches consecutive clauses of a sentence, deduplicating boundary overlap words if needed.
+        Preserves natural flow between audio chunks.
+        """
+        if not prev:
+            return next_chunk.strip()
+        if not next_chunk:
+            return prev.strip()
+        p = prev.strip()
+        n = next_chunk.strip()
+
+        # Check for 1 to 3 word overlap at boundary
+        prev_words = p.split()
+        next_words = n.split()
+
+        max_check = min(3, len(prev_words), len(next_words))
+        for k in range(max_check, 0, -1):
+            prev_tail = [w.lower().strip(".,!?;:-_\"'") for w in prev_words[-k:]]
+            next_head = [w.lower().strip(".,!?;:-_\"'") for w in next_words[:k]]
+            if prev_tail == next_head:
+                return " ".join(prev_words + next_words[k:])
+
+        return f"{p} {n}"
+
     def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> tuple[list[dict], bool]:
         """Synchronously runs whisper inference on a float32 16kHz mono audio chunk with 3-language restriction."""
         model = self._get_model()
@@ -591,7 +620,7 @@ class TranscriptionService:
                     condition_on_previous_text=False,  # Prevents repeating previous text or looping
                     without_timestamps=True,  # Significant speedup since timestamps are managed by the audio chunker
                     vad_filter=True,  # Silero VAD filters out laughter, breathing, and mic hum before decoding
-                    vad_parameters=dict(min_silence_duration_ms=350),
+                    vad_parameters=dict(min_silence_duration_ms=600),
                     no_speech_threshold=0.6,
                     compression_ratio_threshold=2.4,
                     repetition_penalty=1.2,  # Penalizes generating identical tokens repeatedly
@@ -617,17 +646,21 @@ class TranscriptionService:
         """
         Background worker using a decoupled producer-consumer queue:
         - Producer: Continuously reads 16kHz mono PCM from FFmpeg stdout with zero backpressure on MediaMTX.
-        - Consumer: Accumulates speech utterances using voice activity energy detection and transcribes without cutting words in half.
+        - Consumer: Accumulates speech utterances using voice activity energy detection and sentence stitching,
+          capturing full sentences before emitting lines to avoid fragmenting speech and confusing script synchronization.
         """
         rtmp_url = f"{settings.MEDIAMTX_RTMP_URL}/live/{stream_key}"
         
         # Audio specs: 16kHz, 16-bit mono PCM = 32,000 bytes/sec
         SAMPLE_RATE = 16000
         BYTES_PER_SEC = SAMPLE_RATE * 2  # 32,000 bytes/sec
-        MIN_UTTERANCE_BYTES = int(BYTES_PER_SEC * 1.5)  # At least 1.5s of speech
-        MAX_UTTERANCE_BYTES = int(BYTES_PER_SEC * 4.0)  # At most 4.0s before forcing a chunk
-        PAUSE_SILENCE_BYTES = int(BYTES_PER_SEC * 0.45) # 0.45s of silence marks end of sentence/phrase
-        ENERGY_THRESHOLD = 0.006                         # RMS energy threshold distinguishing speech from mic noise
+        MIN_UTTERANCE_BYTES = int(BYTES_PER_SEC * 1.2)  # At least 1.2s of speech before evaluating natural pause
+        MAX_UTTERANCE_BYTES = int(BYTES_PER_SEC * 8.5)  # Up to 8.5s to capture whole sentences without mid-sentence chop
+        PAUSE_SILENCE_BYTES = int(BYTES_PER_SEC * 0.85) # 0.85s of silence marks true end of sentence/phrase (not breathing pause)
+        OVERLAP_BYTES = int(BYTES_PER_SEC * 0.6)        # 600ms overlap if forced to chunk at MAX_UTTERANCE_BYTES
+        SILENCE_FLUSH_BYTES = int(BYTES_PER_SEC * 1.2)  # 1.2s of silence flushes any pending incomplete sentence
+        ENERGY_THRESHOLD = 0.0055                       # RMS energy threshold distinguishing speech from mic noise
+        TERMINAL_PUNCTUATION = (".", "!", "?", "。", "！", "？")
 
         logger.info(f"Transcription worker attempting connection to RTMP stream {rtmp_url}")
 
@@ -688,10 +721,135 @@ class TranscriptionService:
             has_speech = False
             silence_bytes = 0
 
+            # Sentence accumulation state across chunks
+            pending_sentence = ""
+            pending_start_sec = 0.0
+            pending_language = "en"
+
+            async def _emit_complete_subtitle(
+                text: str,
+                lang: str,
+                start_s: float,
+                end_s: float,
+                is_music: bool,
+                trig_reason: str
+            ):
+                clean_text = text.strip()
+                if not clean_text:
+                    return
+
+                sub_rec_id = None
+                now = datetime.now(timezone.utc)
+                db: Session = SessionLocal()
+                try:
+                    import re
+                    from pathlib import Path
+                    from app.models.recording import Recording
+
+                    rec_dirs = [Path("/storage/recordings/live") / stream_key, Path("storage/recordings/live") / stream_key]
+                    for rd in rec_dirs:
+                        if rd.exists():
+                            files = sorted(rd.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
+                            if files:
+                                latest = files[0]
+                                if (time.time() - latest.stat().st_mtime) < 45.0:
+                                    rel_path = f"live/{stream_key}/{latest.name}"
+                                    active_rec = db.query(Recording).filter(
+                                        Recording.event_id == event_id,
+                                        Recording.filename == rel_path
+                                    ).first()
+
+                                    match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', latest.stem)
+                                    if match:
+                                        dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
+                                        start_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+                                    else:
+                                        start_dt = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+
+                                    if not active_rec:
+                                        friendly_title = f"{start_dt.strftime('%I:%M:%S %p').lower()} {start_dt.day} {start_dt.strftime('%b %Y')}"
+                                        active_rec = Recording(
+                                            event_id=event_id,
+                                            title=friendly_title,
+                                            filename=rel_path,
+                                            file_size_bytes=latest.stat().st_size,
+                                            duration_seconds=0.0,
+                                            status="recording",
+                                            created_at=start_dt
+                                        )
+                                        db.add(active_rec)
+                                        db.commit()
+                                        db.refresh(active_rec)
+
+                                    sub_rec_id = active_rec.id
+                                    diff = max(0.0, (now - start_dt).total_seconds())
+                                    start_s = round(diff, 1)
+                                    end_s = round(diff + max(1.0, end_s - start_s), 1)
+                                    break
+
+                    sub = Subtitle(
+                        id=str(uuid.uuid4()),
+                        event_id=event_id,
+                        stream_key=stream_key,
+                        recording_id=sub_rec_id,
+                        text=clean_text,
+                        language=lang,
+                        start_seconds=start_s,
+                        end_seconds=end_s,
+                        confidence=0.9,
+                        is_music=bool(is_music),
+                        created_at=now
+                    )
+                    db.add(sub)
+                    db.commit()
+                    sub_id = sub.id
+                except Exception as db_err:
+                    db.rollback()
+                    logger.error(f"Failed to persist subtitle to DB: {db_err}")
+                    sub_id = str(uuid.uuid4())
+                    sub_rec_id = None
+                finally:
+                    db.close()
+
+                payload = {
+                    "type": "subtitle",
+                    "id": sub_id,
+                    "event_id": event_id,
+                    "recording_id": sub_rec_id,
+                    "text": clean_text,
+                    "language": lang,
+                    "start_seconds": start_s,
+                    "end_seconds": end_s,
+                    "is_music": is_music,
+                    "created_at": now.isoformat()
+                }
+                await self.broadcast_subtitle(event_id, payload)
+                music_indicator = " [MUSIC/SINGING]" if is_music else ""
+                logger.info(f"[{event_id[:8]}] Subtitle ({start_s}s, {trig_reason}{music_indicator}): {clean_text}")
+
+                # Auto-sync live speech with event's active script
+                try:
+                    await self._match_and_sync_script(event_id, clean_text, is_music=is_music)
+                except Exception as sync_err:
+                    logger.warning(f"Script sync check failed: {sync_err}")
+
             while True:
                 block = await audio_queue.get()
                 if block is None:
-                    # Stream ended
+                    # Stream ended: flush any pending sentence before exiting
+                    if pending_sentence:
+                        final_text = pending_sentence.strip()
+                        if not final_text.endswith(TERMINAL_PUNCTUATION):
+                            final_text = final_text.rstrip(",;: -") + "."
+                        await _emit_complete_subtitle(
+                            text=final_text,
+                            lang=pending_language,
+                            start_s=pending_start_sec,
+                            end_s=round(stream_elapsed, 1),
+                            is_music=False,
+                            trig_reason="stream_end"
+                        )
+                        pending_sentence = ""
                     logger.info(f"FFmpeg stream finished for event {event_id}")
                     break
 
@@ -712,11 +870,11 @@ class TranscriptionService:
                 trigger_reason = ""
 
                 if has_speech and silence_bytes >= PAUSE_SILENCE_BYTES and len(audio_buffer) >= MIN_UTTERANCE_BYTES:
-                    # Natural pause after a spoken phrase
+                    # Natural pause (0.85s of silence) after spoken words: sentence/phrase boundary reached
                     should_transcribe = True
                     trigger_reason = "pause"
                 elif has_speech and len(audio_buffer) >= MAX_UTTERANCE_BYTES:
-                    # Continuous speech reached max duration
+                    # Long continuous speech reached max duration (8.5s)
                     should_transcribe = True
                     trigger_reason = "max_len"
                 elif not has_speech and len(audio_buffer) >= int(BYTES_PER_SEC * 1.5):
@@ -725,11 +883,33 @@ class TranscriptionService:
                     stream_elapsed += dropped_sec
                     audio_buffer.clear()
                     silence_bytes = 0
+
+                    # If an incomplete sentence was waiting and speaker stopped speaking for >1.2s:
+                    if pending_sentence:
+                        final_text = pending_sentence.strip()
+                        if not final_text.endswith(TERMINAL_PUNCTUATION):
+                            final_text = final_text.rstrip(",;: -") + "."
+                        await _emit_complete_subtitle(
+                            text=final_text,
+                            lang=pending_language,
+                            start_s=pending_start_sec,
+                            end_s=round(stream_elapsed, 1),
+                            is_music=False,
+                            trig_reason="silence_timeout"
+                        )
+                        pending_sentence = ""
                     continue
 
                 if should_transcribe:
                     raw_audio = bytes(audio_buffer)
-                    audio_buffer.clear()
+                    if trigger_reason == "max_len" and len(audio_buffer) > OVERLAP_BYTES:
+                        # Retain trailing 600ms overlap in audio_buffer so boundary words are not cut in half
+                        audio_buffer = bytearray(audio_buffer[-OVERLAP_BYTES:])
+                        chunk_advance_sec = (len(raw_audio) - OVERLAP_BYTES) / BYTES_PER_SEC
+                    else:
+                        audio_buffer.clear()
+                        chunk_advance_sec = len(raw_audio) / BYTES_PER_SEC
+
                     has_speech = False
                     silence_bytes = 0
 
@@ -739,10 +919,9 @@ class TranscriptionService:
                     # Run inference in background thread
                     results, is_acoustics = await asyncio.to_thread(self._transcribe_chunk_sync, audio_np)
 
-                    now = datetime.now(timezone.utc)
                     start_sec = round(stream_elapsed, 1)
                     end_sec = round(stream_elapsed + duration_sec, 1)
-                    stream_elapsed += duration_sec
+                    stream_elapsed += chunk_advance_sec
 
                     combined_text = ""
                     is_chunk_music = False
@@ -755,104 +934,69 @@ class TranscriptionService:
                         combined_text = "♪ [Live Music / Performance] ♪"
                         is_chunk_music = True
 
-                    if combined_text:
-                        # Save to Database
-                            db: Session = SessionLocal()
-                            try:
-                                import re
-                                from pathlib import Path
-                                from app.models.recording import Recording
+                    if is_chunk_music:
+                        # Flush any pending sentence before emitting music
+                        if pending_sentence:
+                            final_text = pending_sentence.strip()
+                            if not final_text.endswith(TERMINAL_PUNCTUATION):
+                                final_text = final_text.rstrip(",;: -") + "."
+                            await _emit_complete_subtitle(
+                                text=final_text,
+                                lang=pending_language,
+                                start_s=pending_start_sec,
+                                end_s=start_sec,
+                                is_music=False,
+                                trig_reason="flush_before_music"
+                            )
+                            pending_sentence = ""
 
-                                sub_rec_id = None
-                                # Check if there is an active recording file currently on disk
-                                rec_dirs = [Path("/storage/recordings/live") / stream_key, Path("storage/recordings/live") / stream_key]
-                                for rd in rec_dirs:
-                                    if rd.exists():
-                                        files = sorted(rd.glob("*.mp4"), key=lambda f: f.stat().st_mtime, reverse=True)
-                                        if files:
-                                            latest = files[0]
-                                            # If touched within last 45s, this is the active take being recorded
-                                            if (time.time() - latest.stat().st_mtime) < 45.0:
-                                                rel_path = f"live/{stream_key}/{latest.name}"
-                                                active_rec = db.query(Recording).filter(
-                                                    Recording.event_id == event_id,
-                                                    Recording.filename == rel_path
-                                                ).first()
+                        # Emit music subtitle
+                        await _emit_complete_subtitle(
+                            text=combined_text,
+                            lang="en",
+                            start_s=start_sec,
+                            end_s=end_sec,
+                            is_music=True,
+                            trig_reason=trigger_reason
+                        )
 
-                                                match = re.search(r'(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})', latest.stem)
-                                                if match:
-                                                    dt_str = f"{match.group(1)} {match.group(2)}:{match.group(3)}:{match.group(4)}"
-                                                    start_dt = datetime.strptime(dt_str, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
-                                                else:
-                                                    start_dt = datetime.fromtimestamp(latest.stat().st_mtime, tz=timezone.utc)
+                    elif combined_text:
+                        chunk_lang = results[0].get("language", "en") if results else "en"
+                        if pending_sentence:
+                            stitched_text = self._stitch_sentence_clauses(pending_sentence, combined_text)
+                        else:
+                            stitched_text = combined_text
+                            pending_start_sec = start_sec
 
-                                                if not active_rec:
-                                                    friendly_title = f"{start_dt.strftime('%I:%M:%S %p').lower()} {start_dt.day} {start_dt.strftime('%b %Y')}"
-                                                    active_rec = Recording(
-                                                        event_id=event_id,
-                                                        title=friendly_title,
-                                                        filename=rel_path,
-                                                        file_size_bytes=latest.stat().st_size,
-                                                        duration_seconds=0.0,
-                                                        status="recording",
-                                                        created_at=start_dt
-                                                    )
-                                                    db.add(active_rec)
-                                                    db.commit()
-                                                    db.refresh(active_rec)
+                        pending_language = chunk_lang
+                        has_terminal = stitched_text.rstrip().endswith(TERMINAL_PUNCTUATION)
+                        word_count = len(stitched_text.split())
 
-                                                sub_rec_id = active_rec.id
-                                                diff = max(0.0, (now - start_dt).total_seconds())
-                                                start_sec = round(diff, 1)
-                                                end_sec = round(diff + duration_sec, 1)
-                                                break
+                        # A sentence is complete when:
+                        # 1. It ends with terminal punctuation (. ! ? 。 ！ ？)
+                        # 2. Or the chunk was triggered by a natural pause (speaker stopped speaking for >= 0.85s)
+                        # 3. Or it has accumulated >= 25 words
+                        is_complete = has_terminal or (trigger_reason == "pause") or (word_count >= 25)
 
-                                sub = Subtitle(
-                                    id=str(uuid.uuid4()),
-                                    event_id=event_id,
-                                    stream_key=stream_key,
-                                    recording_id=sub_rec_id,
-                                    text=combined_text,
-                                    language=results[0].get("language", "en"),
-                                    start_seconds=start_sec,
-                                    end_seconds=end_sec,
-                                    confidence=0.9,
-                                    is_music=bool(is_chunk_music),
-                                    created_at=now
-                                )
-                                db.add(sub)
-                                db.commit()
-                                sub_id = sub.id
-                            except Exception as db_err:
-                                db.rollback()
-                                logger.error(f"Failed to persist subtitle to DB: {db_err}")
-                                sub_id = str(uuid.uuid4())
-                                sub_rec_id = None
-                            finally:
-                                db.close()
+                        if is_complete:
+                            final_text = stitched_text.strip()
+                            if not final_text.endswith(TERMINAL_PUNCTUATION) and not final_text.endswith((",", ";", ":", "-")):
+                                final_text += "."
+                            elif final_text.endswith((",", ";", ":", "-")):
+                                final_text = final_text.rstrip(",;: -") + "."
 
-                            # Broadcast closed captions via WebSocket to all listeners
-                            payload = {
-                                "type": "subtitle",
-                                "id": sub_id,
-                                "event_id": event_id,
-                                "recording_id": sub_rec_id,
-                                "text": combined_text,
-                                "language": results[0].get("language", "en"),
-                                "start_seconds": start_sec,
-                                "end_seconds": end_sec,
-                                "is_music": is_chunk_music,
-                                "created_at": now.isoformat()
-                            }
-                            await self.broadcast_subtitle(event_id, payload)
-                            music_indicator = " [MUSIC/SINGING]" if is_chunk_music else ""
-                            logger.info(f"[{event_id[:8]}] Subtitle ({start_sec}s, {trigger_reason}{music_indicator}): {combined_text}")
-
-                            # Auto-sync live speech with event's active script
-                            try:
-                                await self._match_and_sync_script(event_id, combined_text, is_music=is_chunk_music)
-                            except Exception as sync_err:
-                                logger.warning(f"Script sync check failed: {sync_err}")
+                            await _emit_complete_subtitle(
+                                text=final_text,
+                                lang=pending_language,
+                                start_s=pending_start_sec,
+                                end_s=end_sec,
+                                is_music=False,
+                                trig_reason=trigger_reason
+                            )
+                            pending_sentence = ""
+                        else:
+                            # Sentence is incomplete and speaker is still speaking (cut by max_len 8.5s)
+                            pending_sentence = stitched_text
 
         except asyncio.CancelledError:
             logger.info(f"Transcription worker cancelled for event {event_id}")
@@ -915,6 +1059,7 @@ class TranscriptionService:
                     allow_jump = bool(getattr(active_script, "auto_jump", False))
                     event_auto_jump[event_id] = allow_jump
 
+                # 1. Primary match with current whole sentence
                 matched_block, confidence = match_spoken_text_to_script(
                     blocks=blocks,
                     spoken_text=spoken_text,
@@ -926,6 +1071,35 @@ class TranscriptionService:
                     is_music=is_music,
                     allow_jump=allow_jump
                 )
+
+                # 2. If primary match was below threshold, check with recent rolling spoken context
+                history = self.event_spoken_history.get(event_id, [])
+                recent_entries = [h for h in history if (now - h["timestamp"]) < 15.0]
+                self.event_spoken_history[event_id] = recent_entries
+
+                if not matched_block and not is_music and recent_entries:
+                    prev_text = recent_entries[-1]["text"]
+                    combined_spoken = f"{prev_text} {spoken_text}"
+                    combined_block, combined_conf = match_spoken_text_to_script(
+                        blocks=blocks,
+                        spoken_text=combined_spoken,
+                        current_block_index=curr_idx,
+                        time_since_last_match=time_since,
+                        threshold=0.62,
+                        local_window_size=5,
+                        global_search_delay_seconds=3.0,
+                        is_music=is_music,
+                        allow_jump=allow_jump
+                    )
+                    if combined_block and combined_conf > confidence:
+                        matched_block = combined_block
+                        confidence = combined_conf
+
+                if not is_music:
+                    self.event_spoken_history.setdefault(event_id, []).append({
+                        "text": spoken_text,
+                        "timestamp": now
+                    })
 
                 if matched_block:
                     event_active_blocks[event_id] = matched_block.id
