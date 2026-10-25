@@ -1088,10 +1088,10 @@ Tune: zerolatency`;
                     <TableRow key={m.id}>
                       <TableCell>
                         <div className="font-medium text-foreground">
-                          {m.user?.full_name || m.user?.username || 'Unknown'}
+                          {m.user?.full_name || m.user?.email || 'Unknown'}
                         </div>
                         <div className="text-xs text-muted-foreground font-mono">
-                          @{m.user?.username} • {m.user?.email}
+                          {m.user?.email}
                         </div>
                       </TableCell>
                       <TableCell>
@@ -1108,7 +1108,7 @@ Tune: zerolatency`;
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            onClick={() => handleRemoveMember(m.id, m.user?.username)}
+                            onClick={() => handleRemoveMember(m.id, m.user?.full_name || m.user?.email)}
                             className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
                             title="Remove Member"
                           >
@@ -1134,7 +1134,7 @@ Tune: zerolatency`;
               <span>Add Crew Member</span>
             </DialogTitle>
             <DialogDescription>
-              Enter the username or email of a registered crew member to assign them a role.
+              Enter the email address of a registered crew member to assign them a role.
             </DialogDescription>
           </DialogHeader>
 

@@ -45,18 +45,18 @@ export function Navbar() {
                 >
                   <div className="flex flex-col text-right">
                     <span className="text-xs font-semibold leading-tight">
-                      {user.full_name || user.username}
+                      {user.full_name || user.email}
                     </span>
                     <span className="text-[10px] text-muted-foreground font-normal">
-                      @{user.username}
+                      {user.email}
                     </span>
                   </div>
                   <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuLabel className="font-normal text-xs text-muted-foreground">
-                  Signed in as <strong className="text-foreground">@{user.username}</strong>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel className="font-normal text-xs text-muted-foreground truncate">
+                  Signed in as <strong className="text-foreground block truncate">{user.email}</strong>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {user.is_superadmin && (
@@ -66,7 +66,7 @@ export function Navbar() {
                       className="flex items-center gap-2 cursor-pointer w-full"
                     >
                       <Settings className="w-4 h-4 text-muted-foreground" />
-                      <span>Settings</span>
+                      <span>Admin Settings</span>
                     </Link>
                   </DropdownMenuItem>
                 )}

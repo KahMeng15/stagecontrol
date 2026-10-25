@@ -14,7 +14,8 @@ def get_or_create_settings(db: Session) -> SystemSettings:
         settings_obj = SystemSettings(
             id="default",
             primary_domain="http://localhost:3000",
-            alternative_domain=None
+            alternative_domain=None,
+            registration_mode="open"
         )
         db.add(settings_obj)
         db.commit()
@@ -49,6 +50,15 @@ def update_system_settings(
         if a and not (a.startswith("http://") or a.startswith("https://")):
             a = f"https://{a}"
         settings_obj.alternative_domain = a or None
+
+    if settings_in.registration_mode is not None:
+        mode = settings_in.registration_mode.strip().lower()
+        if mode not in ("open", "approval", "closed"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Registration mode must be 'open', 'approval', or 'closed'"
+            )
+        settings_obj.registration_mode = mode
 
     db.commit()
     db.refresh(settings_obj)

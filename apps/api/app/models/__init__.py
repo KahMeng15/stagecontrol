@@ -1,6 +1,6 @@
 from app.database import Base
 from app.models.enums import EventRole, EventStatus, has_sufficient_role
-from app.models.user import User
+from app.models.user import User, UserLoginLog
 from app.models.event import Event
 from app.models.membership import Membership
 from app.models.recording import Recording, VideoMarker
@@ -15,6 +15,7 @@ __all__ = [
     "EventStatus",
     "has_sufficient_role",
     "User",
+    "UserLoginLog",
     "Event",
     "Membership",
     "Recording",

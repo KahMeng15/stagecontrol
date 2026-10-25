@@ -61,10 +61,15 @@ Web Application will be available at [http://localhost:3000](http://localhost:30
 
 Run all services with instant hot-reloading for both FastAPI and Next.js:
 ```bash
+# Everyday development (boots in ~2 seconds using cached images):
+docker compose -f docker-compose.dev.yml up
+
+# Only when adding new dependencies to requirements.txt or package.json:
 docker compose -f docker-compose.dev.yml up --build
 ```
 - Edit Python files in `apps/api/app` → Uvicorn reloads automatically.
 - Edit React/TSX files in `apps/web/src` → Fast Refresh updates the browser instantly.
+- To stop the containers when done: `docker compose -f docker-compose.dev.yml stop` (or `down`).
 
 ---
 

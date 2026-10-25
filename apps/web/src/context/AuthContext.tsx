@@ -7,8 +7,8 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isLoading: boolean;
-  login: (usernameOrEmail: string, password: string) => Promise<AuthResponse>;
-  register: (username: string, email: string, password: string, fullName?: string) => Promise<AuthResponse>;
+  login: (email: string, password: string) => Promise<AuthResponse>;
+  register: (email: string, password: string, fullName: string) => Promise<AuthResponse>;
   logout: () => void;
   refreshUser: () => Promise<void>;
 }
@@ -41,24 +41,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const login = async (usernameOrEmail: string, password: string) => {
-    const data = await api.login({ username_or_email: usernameOrEmail, password });
-    setStoredToken(data.access_token);
-    setToken(data.access_token);
-    setUser(data.user);
+  const login = async (email: string, password: string) => {
+    const data = await api.login({ email, password });
+    if (data.access_token) {
+      setStoredToken(data.access_token);
+      setToken(data.access_token);
+      setUser(data.user);
+    }
     return data;
   };
 
-  const register = async (username: string, email: string, password: string, fullName?: string) => {
+  const register = async (email: string, password: string, fullName: string) => {
     const data = await api.register({
-      username,
       email,
       password,
       full_name: fullName,
     });
-    setStoredToken(data.access_token);
-    setToken(data.access_token);
-    setUser(data.user);
+    if (data.access_token && !data.requires_approval) {
+      setStoredToken(data.access_token);
+      setToken(data.access_token);
+      setUser(data.user);
+    }
     return data;
   };
 

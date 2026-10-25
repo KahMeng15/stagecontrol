@@ -1,17 +1,21 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { api, setStoredToken } from '@/lib/api';
-import { Sliders, Lock, Mail, User, AlertCircle, ArrowRight, CheckCircle2, KeyRound, Radio } from 'lucide-react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { AlertCircle, ArrowRight, CheckCircle2 } from 'lucide-react';
 
 export default function LoginPage() {
   const router = useRouter();
   const { user, login, register, isLoading } = useAuth();
 
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'guest'>('login');
-  const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
   const [password, setPassword] = useState('');
@@ -20,8 +24,29 @@ export default function LoginPage() {
   const [guestPin, setGuestPin] = useState('');
   const [guestDisplayName, setGuestDisplayName] = useState('');
 
+  // System registration mode: 'open' | 'approval' | 'closed'
+  const [registrationMode, setRegistrationMode] = useState<'open' | 'approval' | 'closed'>('open');
+  const [approvalPendingMessage, setApprovalPendingMessage] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  // Load registration mode
+  useEffect(() => {
+    let ignore = false;
+    api.getRegistrationMode()
+      .then((res) => {
+        if (!ignore && res?.registration_mode) {
+          setRegistrationMode(res.registration_mode);
+        }
+      })
+      .catch(() => {
+        // Fallback to open if settings cannot be queried
+      });
+    return () => {
+      ignore = true;
+    };
+  }, []);
 
   // If already authenticated, redirect to dashboard
   useEffect(() => {
@@ -30,9 +55,17 @@ export default function LoginPage() {
     }
   }, [user, isLoading, router]);
 
+  // If registration is closed and user was on register tab, switch to login
+  useEffect(() => {
+    if (registrationMode === 'closed' && authMode === 'register') {
+      setAuthMode('login');
+    }
+  }, [registrationMode, authMode]);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setApprovalPendingMessage(null);
     setSubmitting(true);
 
     try {
@@ -48,16 +81,29 @@ export default function LoginPage() {
       }
 
       if (authMode === 'register') {
-        if (!username || !email || !password) {
-          throw new Error('Please fill in all required fields');
+        if (!fullName.trim() || !email.trim() || !password) {
+          throw new Error('Full Name, Email, and Password are all required.');
         }
-        await register(username, email, password, fullName || undefined);
-      } else {
-        if (!username || !password) {
-          throw new Error('Please enter username/email and password');
+
+        const res = await register(email.trim(), password, fullName.trim());
+        if (res.requires_approval || !res.access_token) {
+          setApprovalPendingMessage(
+            res.message || 'Registration submitted! Your account is pending administrator approval before you can log in.'
+          );
+          setAuthMode('login');
+          return;
         }
-        await login(username, password);
+
+        router.push('/');
+        return;
       }
+
+      // Login
+      if (!email.trim() || !password) {
+        throw new Error('Please enter your email and password');
+      }
+
+      await login(email.trim(), password);
       router.push('/');
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -72,245 +118,214 @@ export default function LoginPage() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#090b10]">
-        <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#090b10] px-4 py-12 relative overflow-hidden">
-      {/* Background ambient lighting */}
-      <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
+  const showRegisterTab = registrationMode !== 'closed';
 
-      <div className="w-full max-w-md relative z-10">
-        {/* Logo and Header */}
+  return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-background px-4 py-12">
+      <div className="w-full max-w-md">
+        {/* Minimal header matching Navbar styling */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-600/30 to-purple-600/30 border border-blue-500/30 text-blue-400 mb-4 shadow-xl shadow-blue-950/40">
-            <Sliders className="w-7 h-7" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-100">StageControl</h1>
-          <p className="text-sm text-slate-400 mt-1">
-            Live event production, script cues & crew comms
+          <Link href="/" className="inline-block group">
+            <span className="font-bold text-foreground tracking-tight text-3xl hover:text-foreground/80 transition-colors">
+              stagecontrol
+            </span>
+          </Link>
+          <p className="text-sm text-muted-foreground mt-2">
+            Live event production, script cues &amp; crew comms
           </p>
         </div>
 
-        {/* Card */}
-        <div className="bg-[#11141f] border border-[#1e2638] rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl">
-          {/* Tabs */}
-          <div className="flex border-b border-[#1e2638] mb-6">
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('login');
-                setError(null);
-              }}
-              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors ${
-                authMode === 'login'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('register');
-                setError(null);
-              }}
-              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors ${
-                authMode === 'register'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              Register Crew
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setAuthMode('guest');
-                setError(null);
-              }}
-              className={`flex-1 pb-3 text-xs sm:text-sm font-medium border-b-2 transition-colors flex items-center justify-center gap-1 ${
-                authMode === 'guest'
-                  ? 'border-blue-500 text-blue-400'
-                  : 'border-transparent text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <KeyRound className="w-3.5 h-3.5" />
-              <span>Guest PIN</span>
-            </button>
-          </div>
+        {/* Auth Card using shadcn */}
+        <Card className="border-border/60 shadow-lg bg-card">
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg font-semibold tracking-tight">
+              {authMode === 'login' && 'Sign in to your crew account'}
+              {authMode === 'register' && 'Create your crew account'}
+              {authMode === 'guest' && 'Enter Room with Event PIN'}
+            </CardTitle>
+            <CardDescription className="text-xs">
+              {authMode === 'login' && 'Enter your registered email and password to access production boards.'}
+              {authMode === 'register' && 'Provide your name and email to join the production system.'}
+              {authMode === 'guest' && 'Enter the 6-digit access PIN provided by your stage lead.'}
+            </CardDescription>
+          </CardHeader>
 
-          {error && (
-            <div className="mb-6 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm flex items-start gap-2.5">
-              <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
-              <span>{error}</span>
-            </div>
-          )}
+          <CardContent className="space-y-5">
+            {/* Tabs */}
+            <Tabs
+              value={authMode}
+              onValueChange={(val) => {
+                setAuthMode(val as 'login' | 'register' | 'guest');
+                setError(null);
+              }}
+              className="w-full"
+            >
+              <TabsList className={`grid w-full ${showRegisterTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                <TabsTrigger value="login">Sign In</TabsTrigger>
+                {showRegisterTab && <TabsTrigger value="register">Register</TabsTrigger>}
+                <TabsTrigger value="guest">Guest PIN</TabsTrigger>
+              </TabsList>
+            </Tabs>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {authMode === 'guest' ? (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    6-Digit Event PIN *
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <KeyRound className="w-4 h-4" />
-                    </div>
-                    <input
+            {approvalPendingMessage && (
+              <div className="p-3.5 rounded-lg bg-primary/10 border border-primary/20 text-primary text-xs flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{approvalPendingMessage}</span>
+              </div>
+            )}
+
+            {error && (
+              <div className="p-3.5 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-xs flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{error}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {authMode === 'guest' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      6-Digit Event PIN *
+                    </label>
+                    <Input
                       type="text"
                       required
                       maxLength={6}
                       value={guestPin}
                       onChange={(e) => setGuestPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
                       placeholder="e.g. 482910"
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-lg tracking-widest font-mono text-blue-400 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                      className="text-center font-mono text-xl tracking-[0.25em] h-12"
+                      autoFocus
                     />
+                    <p className="text-[11px] text-muted-foreground">
+                      Ask your event organizer or stage manager for the room&apos;s 6-digit access PIN.
+                    </p>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Ask your event organizer or stage manager for the room&apos;s 6-digit access PIN.
-                  </p>
-                </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Display Name / Nickname <span className="text-slate-500 font-normal">(Optional)</span>
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <input
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Display Name / Nickname <span className="text-muted-foreground font-normal">(Optional)</span>
+                    </label>
+                    <Input
                       type="text"
                       value={guestDisplayName}
                       onChange={(e) => setGuestDisplayName(e.target.value)}
                       placeholder="Audience - Hall A or Your Name"
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
                     />
                   </div>
-                </div>
+                </>
+              )}
 
-                <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center gap-2">
-                  <Radio className="w-4 h-4 text-blue-400 shrink-0" />
-                  <span>No registration needed. You will join as a read-only viewer.</span>
-                </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    {authMode === 'register' ? 'Username' : 'Username or Email'}
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <User className="w-4 h-4" />
-                    </div>
-                    <input
+              {authMode === 'register' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Full Name *
+                    </label>
+                    <Input
                       type="text"
                       required
-                      autoComplete="username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder={authMode === 'register' ? 'e.g. stagemanager_alex' : 'alex or alex@event.org'}
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="Alex Chen"
+                      autoComplete="name"
+                      autoFocus
                     />
                   </div>
-                </div>
 
-                {authMode === 'register' && (
-                  <>
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                        Email
-                      </label>
-                      <div className="relative">
-                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                          <Mail className="w-4 h-4" />
-                        </div>
-                        <input
-                          type="email"
-                          required
-                          autoComplete="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="alex@crew.org"
-                          className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                        />
-                      </div>
-                    </div>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Email Address *
+                    </label>
+                    <Input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="alex@crew.org"
+                      autoComplete="email"
+                    />
+                  </div>
 
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                        Full Name <span className="text-slate-500 font-normal">(Optional)</span>
-                      </label>
-                      <input
-                        type="text"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        placeholder="Alex Chen"
-                        className="w-full px-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                      />
-                    </div>
-                  </>
-                )}
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-300 uppercase tracking-wider mb-1.5">
-                    Password
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <input
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Password *
+                    </label>
+                    <Input
                       type="password"
                       required
-                      autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       placeholder="••••••••••••"
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#090b10] border border-[#1e2638] rounded-lg text-sm text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                      autoComplete="new-password"
                     />
                   </div>
-                </div>
-              </>
-            )}
-
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full mt-6 py-2.5 px-4 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
-            >
-              {submitting ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-              ) : (
-                <>
-                  <span>
-                    {authMode === 'guest'
-                      ? 'Enter Room as Viewer'
-                      : authMode === 'register'
-                      ? 'Create Account'
-                      : 'Sign In'}
-                  </span>
-                  <ArrowRight className="w-4 h-4" />
                 </>
               )}
-            </button>
-          </form>
 
-          {authMode === 'register' && (
-            <div className="mt-5 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-300 text-xs flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0" />
-              <span>The first registered account automatically receives Lead Superadmin permissions.</span>
-            </div>
-          )}
-        </div>
+              {authMode === 'login' && (
+                <>
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Email Address
+                    </label>
+                    <Input
+                      type="email"
+                      required
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="alex@crew.org"
+                      autoComplete="email"
+                      autoFocus
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-foreground uppercase tracking-wider">
+                      Password
+                    </label>
+                    <Input
+                      type="password"
+                      required
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      autoComplete="current-password"
+                    />
+                  </div>
+                </>
+              )}
+
+              <Button
+                type="submit"
+                disabled={submitting}
+                className="w-full mt-2 gap-2 shadow-sm"
+              >
+                {submitting ? (
+                  <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <span>
+                      {authMode === 'guest'
+                        ? 'Enter Room as Viewer'
+                        : authMode === 'register'
+                        ? 'Create Account'
+                        : 'Sign In'}
+                    </span>
+                    <ArrowRight className="w-4 h-4" />
+                  </>
+                )}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
       </div>
     </div>
   );

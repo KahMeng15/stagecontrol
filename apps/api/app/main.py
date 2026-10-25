@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import Base, engine
 import app.models  # noqa: F401
-from app.routers import auth, events, scripts, settings as settings_router, streams, subtitles, walkie
+from app.routers import admin_users, auth, events, scripts, settings as settings_router, streams, subtitles, walkie
 from app.services.transcription import transcription_service
 
 import logging
@@ -61,6 +61,35 @@ async def lifespan(app: FastAPI):
                 if "is_optimized" not in rec_cols:
                     conn.execute(text("ALTER TABLE recordings ADD COLUMN is_optimized INTEGER NOT NULL DEFAULT 0"))
                     conn.commit()
+            if "system_settings" in tables:
+                settings_cols = [c["name"] for c in insp.get_columns("system_settings")]
+                if "registration_mode" not in settings_cols:
+                    conn.execute(text("ALTER TABLE system_settings ADD COLUMN registration_mode VARCHAR(20) NOT NULL DEFAULT 'open'"))
+                    conn.commit()
+            if "users" in tables:
+                user_cols = [c["name"] for c in insp.get_columns("users")]
+                if "approval_status" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN approval_status VARCHAR(20) NOT NULL DEFAULT 'approved'"))
+                    conn.commit()
+                if "last_login_at" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN last_login_at DATETIME"))
+                    conn.commit()
+                if "last_login_ip" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN last_login_ip VARCHAR(45)"))
+                    conn.commit()
+                if "last_login_device" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN last_login_device VARCHAR(100)"))
+                    conn.commit()
+                if "last_login_browser" not in user_cols:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN last_login_browser VARCHAR(100)"))
+                    conn.commit()
+                # Update existing user full_name if empty for kahmeng15@gmail.com
+                conn.execute(text("UPDATE users SET full_name = 'Kah Meng' WHERE email = 'kahmeng15@gmail.com' AND (full_name IS NULL OR full_name = '')"))
+                # Ensure username is email address
+                conn.execute(text("UPDATE users SET username = email WHERE username != email"))
+                conn.commit()
+            # Ensure any new tables like user_login_logs are created
+            Base.metadata.create_all(bind=engine)
     except Exception as col_err:
         logger.warning(f"Column check / alter table note: {col_err}")
 
@@ -103,6 +132,7 @@ app.include_router(streams.router, prefix=settings.API_V1_STR)
 app.include_router(streams.webhook_router, prefix=settings.API_V1_STR)
 app.include_router(subtitles.router, prefix=settings.API_V1_STR)
 app.include_router(settings_router.router, prefix=settings.API_V1_STR)
+app.include_router(admin_users.router, prefix=settings.API_V1_STR)
 app.include_router(walkie.router, prefix=settings.API_V1_STR)
 
 @app.get("/api/health")

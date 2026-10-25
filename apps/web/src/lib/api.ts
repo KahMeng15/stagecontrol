@@ -16,11 +16,16 @@ export const API_BASE = resolveApiBase();
 
 export interface User {
   id: string;
-  username: string;
   email: string;
+  username?: string;
   full_name: string | null;
   is_active: boolean;
   is_superadmin: boolean;
+  approval_status?: 'approved' | 'pending' | 'rejected';
+  last_login_at?: string | null;
+  last_login_ip?: string | null;
+  last_login_device?: string | null;
+  last_login_browser?: string | null;
   created_at: string;
 }
 
@@ -76,7 +81,19 @@ export interface SystemSettings {
   id: string;
   primary_domain: string | null;
   alternative_domain: string | null;
+  registration_mode: 'open' | 'approval' | 'closed';
   updated_at: string;
+}
+
+export interface LoginLog {
+  id: string;
+  user_id: string;
+  ip_address: string | null;
+  device: string | null;
+  browser: string | null;
+  user_agent: string | null;
+  status: string;
+  created_at: string;
 }
 
 export interface StreamStatus {
@@ -154,6 +171,8 @@ export interface AuthResponse {
   access_token: string;
   token_type: string;
   user: User;
+  requires_approval?: boolean;
+  message?: string;
 }
 
 export interface ScriptBlock {
@@ -242,13 +261,16 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 
 export const api = {
   // Auth
-  register: (payload: { username: string; email: string; password: string; full_name?: string }) =>
+  getRegistrationMode: () =>
+    request<{ registration_mode: 'open' | 'approval' | 'closed' }>('/auth/registration-mode'),
+
+  register: (payload: { email: string; password: string; full_name: string; username?: string }) =>
     request<AuthResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
 
-  login: (payload: { username_or_email: string; password: string }) =>
+  login: (payload: { email: string; password: string }) =>
     request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -330,11 +352,51 @@ export const api = {
   // System Settings (Superadmin)
   getSettings: () => request<SystemSettings>('/settings'),
 
-  updateSettings: (payload: { primary_domain?: string | null; alternative_domain?: string | null }) =>
+  updateSettings: (payload: {
+    primary_domain?: string | null;
+    alternative_domain?: string | null;
+    registration_mode?: 'open' | 'approval' | 'closed';
+  }) =>
     request<SystemSettings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(payload),
     }),
+
+  // Admin User Management (Superadmin)
+  listAdminUsers: (params?: { query?: string; status_filter?: string; role_filter?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.query) q.set('query', params.query);
+    if (params?.status_filter && params.status_filter !== 'all') q.set('status_filter', params.status_filter);
+    if (params?.role_filter && params.role_filter !== 'all') q.set('role_filter', params.role_filter);
+    const qs = q.toString();
+    return request<User[]>(`/admin/users${qs ? `?${qs}` : ''}`);
+  },
+
+  createAdminUser: (payload: { email: string; full_name: string; password: string; is_superadmin?: boolean }) =>
+    request<User>('/admin/users', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminUser: (userId: string, payload: { email?: string; full_name?: string; is_superadmin?: boolean; password?: string }) =>
+    request<User>(`/admin/users/${userId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  updateAdminUserStatus: (userId: string, payload: { is_active?: boolean; approval_status?: 'approved' | 'pending' | 'rejected' }) =>
+    request<User>(`/admin/users/${userId}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteAdminUser: (userId: string) =>
+    request<{ message: string }>(`/admin/users/${userId}`, {
+      method: 'DELETE',
+    }),
+
+  getUserLoginLogs: (userId: string) =>
+    request<LoginLog[]>(`/admin/users/${userId}/logs`),
 
   // Live Streaming & Recordings (Milestone 2)
   getStreamStatus: (eventId: string) =>
