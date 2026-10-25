@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { LogOut, Settings, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 
-export function Navbar() {
+export function Navbar({ fluid = false }: { fluid?: boolean } = {}) {
   const { user, logout } = useAuth();
   const router = useRouter();
 
@@ -26,7 +27,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/90 backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
+      <div className={cn("mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between", fluid ? "w-full max-w-none" : "max-w-7xl")}>
         <div className="flex items-center gap-4">
           <Link href="/" className="flex items-center gap-2 group">
             <span className="font-bold text-foreground tracking-tight text-base hover:text-foreground/80 transition-colors">

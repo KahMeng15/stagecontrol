@@ -72,18 +72,73 @@ import {
   Camera,
 } from 'lucide-react';
 
+export type TabKey = 'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew';
+
+export const TAB_TO_SLUG: Record<TabKey, string> = {
+  control: 'controlroom',
+  script: 'livescript',
+  recordings: 'recordings',
+  walkie: 'walkietalkie',
+  stream: 'videosetup',
+  crew: 'crewroster',
+};
+
+export const SLUG_TO_TAB: Record<string, TabKey> = {
+  controlroom: 'control',
+  'control-room': 'control',
+  control: 'control',
+
+  livescript: 'script',
+  'live-script': 'script',
+  script: 'script',
+
+  recordings: 'recordings',
+  recording: 'recordings',
+
+  walkietalkie: 'walkie',
+  'walkie-talkie': 'walkie',
+  walkie: 'walkie',
+
+  videosetup: 'stream',
+  'video-setup': 'stream',
+  stream: 'stream',
+  setup: 'stream',
+
+  crewroster: 'crew',
+  'crew-roster': 'crew',
+  crew: 'crew',
+};
+
 function EventContent() {
   const router = useRouter();
   const params = useParams();
   const eventId = (params?.id as string) || '';
   const { user, isLoading: authLoading } = useAuth();
 
+  const getInitialTab = (): TabKey => {
+    if (typeof window !== 'undefined') {
+      const parts = window.location.pathname.split('/').filter(Boolean);
+      const eventIdx = parts.indexOf('events');
+      if (eventIdx !== -1 && parts.length > eventIdx + 2) {
+        const slug = parts[eventIdx + 2].toLowerCase();
+        if (SLUG_TO_TAB[slug]) {
+          return SLUG_TO_TAB[slug];
+        }
+      }
+    }
+    const tabParam = (params?.tab as string) || '';
+    if (tabParam && SLUG_TO_TAB[tabParam.toLowerCase()]) {
+      return SLUG_TO_TAB[tabParam.toLowerCase()];
+    }
+    return 'control';
+  };
+
   const [event, setEvent] = useState<EventDetail | null>(null);
   const [systemSettings, setSystemSettings] = useState<SystemSettings | null>(null);
   const [selectedDomainType, setSelectedDomainType] = useState<'primary' | 'alternative'>('primary');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew'>('control');
+  const [activeTab, setActiveTab] = useState<TabKey>(getInitialTab);
   const [streamSourceMode, setStreamSourceMode] = useState<'obs' | 'browser'>('obs');
 
   // Copy state
@@ -123,6 +178,58 @@ function EventContent() {
   // - When receiving from another speaker (listener) or playing back recorded call: duck other media volume by 50%
   // - When channel returns to idle: restore all media volume & mute states back to original
   useAudioDucking({ isSpeaker, isListener, isPlayingCall });
+
+  const handleTabChange = (val: string) => {
+    const tabKey = (SLUG_TO_TAB[val.toLowerCase()] || val) as TabKey;
+    setActiveTab(tabKey);
+    const slug = TAB_TO_SLUG[tabKey] || val;
+    const targetId = (params?.id as string) || event?.slug || eventId;
+    if (typeof window !== 'undefined' && targetId) {
+      const newUrl = `/events/${targetId}/${slug}`;
+      if (window.location.pathname !== newUrl) {
+        window.history.pushState(null, '', newUrl);
+      }
+    }
+  };
+
+  // Adjust state during render when route param changes (React-recommended pattern)
+  const tabParam = (params?.tab as string) || '';
+  const [prevTabParam, setPrevTabParam] = useState(tabParam);
+  if (tabParam !== prevTabParam) {
+    setPrevTabParam(tabParam);
+    if (tabParam && SLUG_TO_TAB[tabParam.toLowerCase()]) {
+      setActiveTab(SLUG_TO_TAB[tabParam.toLowerCase()]);
+    }
+  }
+
+  // Synchronize activeTab on browser back/forward buttons (external event)
+  useEffect(() => {
+    const handlePopState = () => {
+      if (typeof window === 'undefined') return;
+      const parts = window.location.pathname.split('/').filter(Boolean);
+      const eventIdx = parts.indexOf('events');
+      if (eventIdx !== -1 && parts.length > eventIdx + 2) {
+        const slug = parts[eventIdx + 2].toLowerCase();
+        const mapped = SLUG_TO_TAB[slug];
+        if (mapped) {
+          setActiveTab(mapped);
+          return;
+        }
+      }
+      if (eventIdx !== -1 && parts.length === eventIdx + 2) {
+        setActiveTab('control');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  // Compute safe active tab based on user permissions
+  const safeActiveTab: TabKey =
+    (activeTab === 'stream' && !isSMOrAdmin) || (activeTab === 'walkie' && !hasWalkieAccess)
+      ? 'control'
+      : activeTab;
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -421,11 +528,11 @@ function EventContent() {
         />
       )}
 
-      <Navbar />
+      <Navbar fluid />
 
       {/* Event Header Banner */}
       <div className="border-b border-border/60 bg-card/60 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
+        <div className="w-full px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div className="space-y-1">
               <div className="flex items-center gap-2.5">
@@ -460,7 +567,7 @@ function EventContent() {
                       size="sm"
                       variant={
                         event.status === st
-                          ? st === 'live'
+                           ? st === 'live'
                             ? 'destructive'
                             : 'default'
                           : 'ghost'
@@ -486,10 +593,10 @@ function EventContent() {
       </div>
 
       {/* Main Tabbed Interface */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      <main className="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6 bg-card/60">
         <Tabs
-          value={activeTab}
-          onValueChange={(val) => setActiveTab(val as typeof activeTab)}
+          value={safeActiveTab}
+          onValueChange={handleTabChange}
           className="space-y-6"
         >
           <TabsList variant="line" className="border-b border-border/60 w-full justify-start gap-6 pb-px">
@@ -542,7 +649,7 @@ function EventContent() {
                   eventId={event.id}
                   streamKey={event.stream_key}
                   isSMOrAdmin={isSMOrAdmin}
-                  onOpenStreamSetup={() => setActiveTab('stream')}
+                  onOpenStreamSetup={() => handleTabChange('stream')}
                   isSpeaker={isSpeaker}
                   isListener={isListener}
                   isPlayingCall={isPlayingCall}
@@ -565,7 +672,7 @@ function EventContent() {
                   onStartTransmission={walkie.startTransmission}
                   onStopTransmission={walkie.stopTransmission}
                   onToggleTransmission={walkie.toggleTransmission}
-                  onOpenCommsTab={() => setActiveTab('walkie')}
+                  onOpenCommsTab={() => handleTabChange('walkie')}
                   onPlaybackChange={setIsPlayingCall}
                 />
               ) : (
@@ -645,7 +752,7 @@ function EventContent() {
 
           {/* Tab 5: Video Stream Setup */}
           {isSMOrAdmin && (
-            <TabsContent value="stream" className="max-w-4xl space-y-6 mt-0">
+            <TabsContent value="stream" className="space-y-6 mt-0">
               {/* Option Switcher: OBS Studio vs Browser & Mobile Camera Studio */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-1.5 rounded-2xl bg-muted/40 border border-border/80">
                 <div className="flex items-center gap-1.5 w-full sm:w-auto">
