@@ -78,6 +78,10 @@ export function BroadcastTranscriptionCard({
         ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
+        ws.onopen = () => {
+          console.log('[BroadcastTranscriptionCard] Connected to real-time subtitles stream');
+        };
+
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
@@ -126,7 +130,15 @@ export function BroadcastTranscriptionCard({
       if (ws) {
         ws.onclose = null;
         ws.onerror = null;
-        ws.close();
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          ws.onopen = () => {
+            try {
+              ws?.close();
+            } catch {}
+          };
+        }
       }
       if (captionTimeoutRef.current) {
         clearTimeout(captionTimeoutRef.current);
