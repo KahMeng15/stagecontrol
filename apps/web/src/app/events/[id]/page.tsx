@@ -10,6 +10,7 @@ import { copyToClipboard } from '@/lib/utils';
 import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
 import { BrowserStreamStudio } from '@/components/video/BrowserStreamStudio';
+import { BroadcastTranscriptionCard } from '@/components/video/BroadcastTranscriptionCard';
 import ScriptTracker from '@/components/script/ScriptTracker';
 import { useWalkieTalkie } from '@/components/walkie/useWalkieTalkie';
 import { useAudioDucking } from '@/components/walkie/useAudioDucking';
@@ -73,6 +74,21 @@ import {
 } from 'lucide-react';
 
 export type TabKey = 'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew';
+
+function formatEventDate(dateString?: string | null): string {
+  if (!dateString) return '';
+  try {
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return dateString;
+    return date.toLocaleDateString('en-GB', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    });
+  } catch {
+    return dateString;
+  }
+}
 
 export const TAB_TO_SLUG: Record<TabKey, string> = {
   control: 'controlroom',
@@ -547,12 +563,9 @@ function EventContent() {
                 <h1 className="text-xl sm:text-2xl font-bold text-foreground tracking-tight">
                   {event.name}
                 </h1>
-                <RoleBadge role={event.user_role} />
               </div>
-              <p className="text-xs text-muted-foreground flex items-center gap-2 pl-9 sm:pl-9">
-                <span>Room Code: <strong className="font-mono text-foreground">{event.slug}</strong></span>
-                <span>•</span>
-                <span>Created {new Date(event.created_at).toLocaleDateString()}</span>
+              <p className="text-xs text-muted-foreground pl-9 sm:pl-9">
+                <span>{formatEventDate(event.created_at)}</span>
               </p>
             </div>
 
@@ -617,13 +630,8 @@ function EventContent() {
 
             {hasWalkieAccess && (
               <TabsTrigger value="walkie" className="gap-2 text-xs font-semibold py-2">
-                <Mic className="w-4 h-4 text-emerald-400" />
+                <Mic className="w-4 h-4" />
                 <span>Walkie-Talkie</span>
-                {walkie.calls.length > 0 && (
-                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5 font-mono ml-1">
-                    {walkie.calls.length}
-                  </Badge>
-                )}
               </TabsTrigger>
             )}
 
@@ -642,9 +650,9 @@ function EventContent() {
 
           {/* Tab 1: Control Room */}
           <TabsContent value="control" className="space-y-6 mt-0">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Ultra-low latency Live Video Player */}
-              <div className="lg:col-span-2">
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+              {/* Row 1, Left: Live Video Player (matches Walkie-Talkie height) */}
+              <div className="lg:col-span-2 flex flex-col">
                 <LivePlayer
                   eventId={event.id}
                   streamKey={event.stream_key}
@@ -653,50 +661,69 @@ function EventContent() {
                   isSpeaker={isSpeaker}
                   isListener={isListener}
                   isPlayingCall={isPlayingCall}
+                  className="h-full"
                 />
               </div>
 
-              {/* Walkie-Talkie & Comms Card (Milestone 4) */}
-              {hasWalkieAccess ? (
-                <WalkieCard
-                  voiceRoom={walkie.voiceRoom}
-                  isConnected={walkie.isConnected}
-                  isTransmitting={walkie.isTransmitting}
-                  isHandsFree={walkie.isHandsFree}
-                  audioLevel={walkie.audioLevel}
-                  incomingSpeaker={walkie.incomingSpeaker}
-                  incomingAudioLevel={walkie.incomingAudioLevel}
-                  connectedUsers={walkie.connectedUsers}
-                  channelBusyMessage={walkie.channelBusyMessage}
-                  recentCalls={walkie.calls}
-                  onStartTransmission={walkie.startTransmission}
-                  onStopTransmission={walkie.stopTransmission}
-                  onToggleTransmission={walkie.toggleTransmission}
-                  onOpenCommsTab={() => handleTabChange('walkie')}
-                  onPlaybackChange={setIsPlayingCall}
-                />
-              ) : (
-                <Card className="flex flex-col justify-between opacity-60">
-                  <CardHeader>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Mic className="w-4 h-4 text-muted-foreground" />
-                      <CardTitle className="text-xs font-bold uppercase tracking-wider">
-                        Crew Walkie-Talkie
-                      </CardTitle>
-                    </div>
-                    <CardDescription className="text-xs">
-                      Voice channel restricted to stage managers and crew members.
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent className="py-6 text-center text-xs text-muted-foreground">
-                    Walkie-Talkie requires Crew or Stage Manager privileges.
-                  </CardContent>
-                </Card>
-              )}
-            </div>
+              {/* Row 1, Right: Walkie-Talkie (matches Video Player height) */}
+              <div className="lg:col-span-1 flex flex-col">
+                {hasWalkieAccess ? (
+                  <WalkieCard
+                    voiceRoom={walkie.voiceRoom}
+                    isConnected={walkie.isConnected}
+                    isTransmitting={walkie.isTransmitting}
+                    isHandsFree={walkie.isHandsFree}
+                    audioLevel={walkie.audioLevel}
+                    incomingSpeaker={walkie.incomingSpeaker}
+                    incomingAudioLevel={walkie.incomingAudioLevel}
+                    connectedUsers={walkie.connectedUsers}
+                    channelBusyMessage={walkie.channelBusyMessage}
+                    recentCalls={walkie.calls}
+                    onStartTransmission={walkie.startTransmission}
+                    onStopTransmission={walkie.stopTransmission}
+                    onToggleTransmission={walkie.toggleTransmission}
+                    onOpenCommsTab={() => handleTabChange('walkie')}
+                    onPlaybackChange={setIsPlayingCall}
+                    className="h-full min-h-[460px] lg:min-h-0"
+                  />
+                ) : (
+                  <Card className="flex flex-col justify-between opacity-60 h-full min-h-[220px] lg:min-h-0">
+                    <CardHeader>
+                      <div className="flex items-center gap-2 mb-1">
+                        <Mic className="w-4 h-4 text-muted-foreground" />
+                        <CardTitle className="text-xs font-bold uppercase tracking-wider">
+                          Crew Walkie-Talkie
+                        </CardTitle>
+                      </div>
+                      <CardDescription className="text-xs">
+                        Voice channel restricted to stage managers and crew members.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                      Walkie-Talkie requires Crew or Stage Manager privileges.
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
 
-            {/* Embedded Live Script & Cue Tracker */}
-            <ScriptTracker eventId={event.id} isSMOrAdmin={canControlScript} />
+              {/* Row 2, Left: Live Script & Cue Tracker (matches Broadcast Transcription height) */}
+              <div className="lg:col-span-2 flex flex-col">
+                <ScriptTracker
+                  eventId={event.id}
+                  isSMOrAdmin={canControlScript}
+                  className="h-[600px]"
+                />
+              </div>
+
+              {/* Row 2, Right: Live Broadcast Transcription (matches Script Tracker height) */}
+              <div className="lg:col-span-1 flex flex-col">
+                <BroadcastTranscriptionCard
+                  eventId={event.id}
+                  isSMOrAdmin={isSMOrAdmin}
+                  className="h-[600px]"
+                />
+              </div>
+            </div>
           </TabsContent>
 
           {/* Tab 2: Dedicated Live Script & Cues */}
@@ -1208,7 +1235,7 @@ Tune: zerolatency`;
                         {m.callsign || <span className="text-muted-foreground/50">—</span>}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
-                        {new Date(m.created_at).toLocaleDateString()}
+                        {formatEventDate(m.created_at)}
                       </TableCell>
                       {isAdmin && (
                         <TableCell className="text-right">

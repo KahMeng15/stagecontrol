@@ -130,6 +130,8 @@ app.include_router(events.router, prefix=settings.API_V1_STR)
 app.include_router(scripts.router, prefix=settings.API_V1_STR)
 app.include_router(streams.router, prefix=settings.API_V1_STR)
 app.include_router(streams.webhook_router, prefix=settings.API_V1_STR)
+app.include_router(streams.auth_router, prefix=settings.API_V1_STR)
+app.include_router(streams.auth_router)  # Also allow direct /streams/auth without /api prefix
 app.include_router(subtitles.router, prefix=settings.API_V1_STR)
 app.include_router(settings_router.router, prefix=settings.API_V1_STR)
 app.include_router(admin_users.router, prefix=settings.API_V1_STR)

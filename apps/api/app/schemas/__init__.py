@@ -29,6 +29,7 @@ from app.schemas.script import (
     ScriptTextImportRequest,
     ScriptJumpRequest,
 )
+from app.schemas.recording import MediaMTXAuthRequest
 
 __all__ = [
     "UserBase",
@@ -59,4 +60,5 @@ __all__ = [
     "ScriptResponse",
     "ScriptTextImportRequest",
     "ScriptJumpRequest",
+    "MediaMTXAuthRequest",
 ]

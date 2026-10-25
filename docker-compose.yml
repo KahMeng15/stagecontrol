@@ -40,6 +40,8 @@ services:
     image: ghcr.io/kahmeng15/stagecontrol-mediamtx:latest
     container_name: stagecontrol-mediamtx
     restart: unless-stopped
+    depends_on:
+      - api
     environment:
       - MTX_HLSSEGMENTCOUNT=20
     ports:

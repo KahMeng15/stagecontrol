@@ -8,13 +8,22 @@ api: yes
 apiAddress: :9997
 
 # Authentication permissions
-authMethod: internal
+# Ingest publishers (OBS via RTMP, WHIP) authenticate against StageControl API.
+# If an invalid stream key is used, MediaMTX refuses to accept the stream.
+authMethod: http
+authHTTPAddress: http://api:8000/api/streams/auth
+authHTTPExclude:
+  - action: api
+  - action: metrics
+  - action: pprof
+  - action: read
+  - action: playback
+
 authInternalUsers:
   - user: any
     pass: ""
     ips: []
     permissions:
-      - action: publish
       - action: read
       - action: playback
       - action: api

@@ -1,4 +1,5 @@
 import os
+import logging
 import httpx
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,7 @@ from app.schemas.recording import (
     MarkerCreate,
     MarkerResponse,
     MarkerUpdate,
+    MediaMTXAuthRequest,
     RecordingResponse,
     RecordingUpdate,
     StreamStatusResponse,
@@ -31,8 +33,115 @@ from app.services.video_processor import (
     remux_to_faststart_mp4,
 )
 
+logger = logging.getLogger("stagecontrol.streams")
+
 router = APIRouter(prefix="/events/{event_id}", tags=["Live Streams & Video Playback"])
 webhook_router = APIRouter(prefix="/events", tags=["MediaMTX Stream Webhooks"])
+auth_router = APIRouter(tags=["MediaMTX Stream Auth"])
+
+def kick_mediamtx_stream(stream_key: str) -> bool:
+    """
+    Terminates any active publisher connection for the given stream_key on MediaMTX.
+    Called when an event's stream key is regenerated or when an event is deleted.
+    """
+    if not stream_key:
+        return False
+    try:
+        mediamtx_api = settings.MEDIAMTX_API_URL.rstrip("/")
+        with httpx.Client(timeout=2.0) as client:
+            resp = client.get(f"{mediamtx_api}/v3/paths/get/live/{stream_key}")
+            if resp.status_code != 200:
+                return False
+            data = resp.json()
+            source = data.get("source") or {}
+            source_type = source.get("type", "")
+            source_id = source.get("id", "")
+            if not source_id:
+                return False
+
+            if source_type == "rtmpConn":
+                kick_resp = client.post(f"{mediamtx_api}/v3/rtmp/conns/kick/{source_id}")
+                return kick_resp.status_code in (200, 204)
+            elif source_type in ("webrtcSession", "whipSession"):
+                kick_resp = client.post(f"{mediamtx_api}/v3/webrtc/sessions/kick/{source_id}")
+                return kick_resp.status_code in (200, 204)
+            elif source_type in ("rtspSession", "rtspsSession"):
+                kick_resp = client.post(f"{mediamtx_api}/v3/rtsp/sessions/kick/{source_id}")
+                return kick_resp.status_code in (200, 204)
+            elif source_type == "srtConn":
+                kick_resp = client.post(f"{mediamtx_api}/v3/srt/conns/kick/{source_id}")
+                return kick_resp.status_code in (200, 204)
+    except Exception as e:
+        logger.debug(f"Note: Could not kick MediaMTX stream for {stream_key}: {e}")
+    return False
+
+@auth_router.post("/streams/auth", status_code=status.HTTP_200_OK)
+@auth_router.post("/events/mediamtx-auth", status_code=status.HTTP_200_OK)
+def authenticate_stream(
+    auth_req: MediaMTXAuthRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    MediaMTX External HTTP Authentication Webhook.
+    Called by MediaMTX whenever an ingest publisher attempts to stream (e.g. OBS via RTMP, WHIP).
+    Rejects the stream if the stream key does not correspond to an existing event.
+    """
+    # Non-publish actions (e.g. read, playback, api, metrics) are permitted
+    if auth_req.action and auth_req.action.lower() != "publish":
+        return {"status": "ok"}
+
+    path = (auth_req.path or "").strip("/")
+    if "?" in path:
+        path = path.split("?")[0].strip("/")
+
+    # Only paths under the 'live/' namespace are valid streaming ingest paths
+    if not path.startswith("live/"):
+        logger.warning(
+            f"MediaMTX publish rejected: path '{path}' is not within 'live/' namespace "
+            f"(protocol={auth_req.protocol}, ip={auth_req.ip})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Publishing is only allowed under 'live/' paths"
+        )
+
+    stream_key = path[len("live/"):].strip("/")
+
+    # Allow internally generated low-bandwidth transcode rendition (e.g. live/<stream_key>_low)
+    # as long as the parent stream key is valid
+    if stream_key.endswith("_low"):
+        stream_key = stream_key[:-4]
+
+    if not stream_key:
+        logger.warning(
+            f"MediaMTX publish rejected: empty stream key for path '{path}' "
+            f"(protocol={auth_req.protocol}, ip={auth_req.ip})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Stream key cannot be empty"
+        )
+
+    event = db.query(Event).filter(Event.stream_key == stream_key).first()
+    if not event:
+        logger.warning(
+            f"MediaMTX publish rejected: invalid stream key '{stream_key[:8]}...' "
+            f"(path='{path}', protocol={auth_req.protocol}, ip={auth_req.ip})"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid stream key: no matching event found"
+        )
+
+    logger.info(
+        f"MediaMTX publish authorized: event '{event.name}' ({event.id}) "
+        f"with stream key '{stream_key[:8]}...' (protocol={auth_req.protocol}, ip={auth_req.ip})"
+    )
+    return {
+        "status": "ok",
+        "event_id": event.id,
+        "event_name": event.name
+    }
 
 def get_effective_domain(request: Request, db: Session) -> str:
     """

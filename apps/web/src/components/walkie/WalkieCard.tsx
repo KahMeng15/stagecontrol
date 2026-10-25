@@ -23,6 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RoleBadge } from '@/components/RoleBadge';
 import { WalkieCall, WalkieActiveSpeaker, WalkiePresenceUser, getAudioMediaUrl } from '@/lib/api';
+import { cn } from '@/lib/utils';
 
 interface WalkieCardProps {
   voiceRoom: string;
@@ -40,6 +41,7 @@ interface WalkieCardProps {
   onToggleTransmission: () => void;
   onOpenCommsTab: () => void;
   onPlaybackChange?: (isPlaying: boolean) => void;
+  className?: string;
 }
 
 interface WalkieRecentCallItemProps {
@@ -238,6 +240,7 @@ export function WalkieCard({
   onToggleTransmission,
   onOpenCommsTab,
   onPlaybackChange,
+  className,
 }: WalkieCardProps) {
   const [playingCallId, setPlayingCallId] = React.useState<string | null>(null);
 
@@ -282,7 +285,7 @@ export function WalkieCard({
   const isSomeoneElseSpeaking = !!incomingSpeaker;
 
   return (
-    <Card className="flex flex-col h-full border-border/70 shadow-sm relative overflow-hidden">
+    <Card className={cn("flex flex-col border-border/70 shadow-sm relative overflow-hidden", className)}>
       {/* Active speaker backdrop glow */}
       {isTransmitting && (
         <div className="absolute inset-0 bg-red-500/5 pointer-events-none animate-pulse" />

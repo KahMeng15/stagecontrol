@@ -54,6 +54,8 @@ services:
     image: bluenviron/mediamtx:latest-ffmpeg
     container_name: stagecontrol-mediamtx-dev
     restart: unless-stopped
+    depends_on:
+      - api
     ports:
       - "1935:1935"       # RTMP (OBS stream ingest)
       - "8888:8888"       # HLS stream & playback

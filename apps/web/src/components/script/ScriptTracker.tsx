@@ -1464,9 +1464,7 @@ export default function ScriptTracker({
       {/* Script Lines Content Container (Continuous List, No Gaps) */}
       <div
         ref={listContainerRef}
-        className={`relative flex-1 overflow-y-auto divide-y divide-border/40 bg-card ${
-          teleprompterMode ? 'max-h-full' : 'max-h-[550px]'
-        }`}
+        className="relative flex-1 min-h-0 overflow-y-auto divide-y divide-border/40 bg-card"
       >
         {loading ? (
           <div className="py-20 text-center flex flex-col items-center justify-center gap-3">

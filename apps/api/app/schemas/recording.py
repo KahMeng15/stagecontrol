@@ -43,6 +43,18 @@ class RecordingResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+class MediaMTXAuthRequest(BaseModel):
+    user: Optional[str] = ""
+    password: Optional[str] = ""
+    ip: Optional[str] = ""
+    action: str = "publish"
+    path: str = ""
+    protocol: Optional[str] = ""
+    id: Optional[str] = None
+    query: Optional[str] = ""
+
+    model_config = ConfigDict(extra="ignore")
+
 class RecordingUpdate(BaseModel):
     title: str
 

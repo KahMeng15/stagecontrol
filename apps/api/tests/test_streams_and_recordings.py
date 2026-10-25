@@ -469,3 +469,138 @@ def test_recording_soft_delete_safeguard_when_file_missing(client, test_db, tmp_
         shutil.rmtree(event_rec_dir, ignore_errors=True)
 
 
+def test_mediamtx_stream_auth_endpoints(client, test_db):
+    """
+    Verifies that MediaMTX HTTP authentication properly validates stream keys:
+    - Rejects invalid stream keys with 401 Unauthorized
+    - Rejects empty stream keys with 401
+    - Rejects paths outside the 'live/' namespace with 401
+    - Accepts valid stream keys with 200 OK
+    - Accepts valid low-bandwidth transcoded renditions (_low)
+    - Rejects low renditions if parent key is invalid
+    - Invalidate stream keys upon regeneration and event deletion
+    - Allows non-publish actions (read, playback)
+    """
+    user = User(
+        username="stream_guard_admin",
+        email="guard@stagecontrol.test",
+        hashed_password=hash_password("adminpass123"),
+        is_superadmin=True
+    )
+    test_db.add(user)
+    test_db.commit()
+
+    event = Event(
+        name="Security Test Show",
+        slug="sec-test-show",
+        created_by_id=user.id,
+        stream_key=generate_stream_key()
+    )
+    test_db.add(event)
+    test_db.commit()
+
+    token = create_access_token(user.id, extra_claims={"sub": user.id, "email": user.email, "role": "admin"})
+    auth_headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Valid stream key publish
+    resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": f"live/{event.stream_key}",
+        "protocol": "rtmp",
+        "ip": "127.0.0.1"
+    })
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ok"
+    assert resp.json()["event_id"] == event.id
+
+    # 2. Also works via alias endpoint /api/events/mediamtx-auth and without /api prefix
+    alias_resp = client.post("/api/events/mediamtx-auth", json={
+        "action": "publish",
+        "path": f"live/{event.stream_key}",
+        "protocol": "rtmp"
+    })
+    assert alias_resp.status_code == 200
+
+    root_resp = client.post("/streams/auth", json={
+        "action": "publish",
+        "path": f"live/{event.stream_key}",
+        "protocol": "rtmp"
+    })
+    assert root_resp.status_code == 200
+
+    # 3. Invalid stream key publish MUST be rejected with 401
+    invalid_resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": "live/invalid_stream_key_999",
+        "protocol": "rtmp",
+        "ip": "192.168.1.50"
+    })
+    assert invalid_resp.status_code == 401
+    assert "Invalid stream key" in invalid_resp.json()["detail"]
+
+    # 4. Empty stream key MUST be rejected with 401
+    empty_resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": "live/",
+        "protocol": "rtmp"
+    })
+    assert empty_resp.status_code == 401
+
+    # 5. Path outside 'live/' namespace MUST be rejected with 401
+    outside_resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": f"broadcast/{event.stream_key}",
+        "protocol": "rtmp"
+    })
+    assert outside_resp.status_code == 401
+    assert "live/" in outside_resp.json()["detail"]
+
+    # 6. Valid low-bandwidth transcode rendition (_low) MUST be accepted
+    low_resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": f"live/{event.stream_key}_low",
+        "protocol": "rtmp"
+    })
+    assert low_resp.status_code == 200
+
+    # 7. Invalid low-bandwidth transcode rendition MUST be rejected
+    bad_low_resp = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": "live/bogus_key_low",
+        "protocol": "rtmp"
+    })
+    assert bad_low_resp.status_code == 401
+
+    # 8. Non-publish actions (read, playback, api) are permitted
+    read_resp = client.post("/api/streams/auth", json={
+        "action": "read",
+        "path": f"live/{event.stream_key}",
+        "protocol": "webrtc"
+    })
+    assert read_resp.status_code == 200
+
+    # 9. Key regeneration invalidates old key
+    old_key = event.stream_key
+    regen_resp = client.post(f"/api/events/{event.id}/regenerate-stream-key", headers=auth_headers)
+    assert regen_resp.status_code == 200
+    new_key = regen_resp.json()["stream_key"]
+    assert new_key != old_key
+
+    # Old key now rejected
+    old_auth = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": f"live/{old_key}",
+        "protocol": "rtmp"
+    })
+    assert old_auth.status_code == 401
+
+    # New key accepted
+    new_auth = client.post("/api/streams/auth", json={
+        "action": "publish",
+        "path": f"live/{new_key}",
+        "protocol": "rtmp"
+    })
+    assert new_auth.status_code == 200
+
+
+

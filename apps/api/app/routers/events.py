@@ -163,8 +163,17 @@ def delete_event(
     db: Session = Depends(get_db)
 ):
     event, _ = event_and_member
+    old_stream_key = event.stream_key
     db.delete(event)
     db.commit()
+
+    # Disconnect active MediaMTX stream on deleted event if any
+    try:
+        from app.routers.streams import kick_mediamtx_stream
+        kick_mediamtx_stream(old_stream_key)
+    except Exception:
+        pass
+
     return None
 
 @router.post("/{event_id}/regenerate-stream-key", response_model=EventResponse)
@@ -173,9 +182,17 @@ def regenerate_stream_key(
     db: Session = Depends(get_db)
 ):
     event, membership = event_and_member
+    old_stream_key = event.stream_key
     event.stream_key = generate_stream_key()
     db.commit()
     db.refresh(event)
+
+    # Disconnect active MediaMTX stream on old key so publisher is forced to use the new key
+    try:
+        from app.routers.streams import kick_mediamtx_stream
+        kick_mediamtx_stream(old_stream_key)
+    except Exception:
+        pass
 
     ev_resp = EventResponse.model_validate(event)
     ev_resp.user_role = EventRole(membership.role)

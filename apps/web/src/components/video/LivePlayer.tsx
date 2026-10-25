@@ -43,7 +43,7 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { toast } from 'sonner';
-import { copyToClipboard } from '@/lib/utils';
+import { copyToClipboard, cn } from '@/lib/utils';
 
 interface LivePlayerProps {
   eventId: string;
@@ -53,6 +53,7 @@ interface LivePlayerProps {
   isSpeaker?: boolean;
   isListener?: boolean;
   isPlayingCall?: boolean;
+  className?: string;
 }
 
 export function LivePlayer({
@@ -62,6 +63,7 @@ export function LivePlayer({
   isSpeaker = false,
   isListener = false,
   isPlayingCall = false,
+  className,
 }: LivePlayerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -72,7 +74,6 @@ export function LivePlayer({
   // Default to HLS because standard OBS encoders output H.264 High Profile with B-frames and AAC audio
   const [playerMode, setPlayerMode] = useState<'hls' | 'webrtc'>('hls');
   const [reloadKey, setReloadKey] = useState(0);
-  const [showBandwidthGuide, setShowBandwidthGuide] = useState(false);
   const [copiedRtmp, setCopiedRtmp] = useState(false);
   const [showBFrameHint, setShowBFrameHint] = useState(false);
   // User initiated live monitoring playback (prevents auto-play buffering & saves bandwidth)
@@ -103,14 +104,7 @@ export function LivePlayer({
   const [subtitles, setSubtitles] = useState<SubtitleItem[]>([]);
   const [activeCaption, setActiveCaption] = useState<string | null>(null);
   const [activeSubtitleId, setActiveSubtitleId] = useState<string | null>(null);
-  const [showTranscriptLog, setShowTranscriptLog] = useState<boolean>(true);
   const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
-  const [transcriptSearch, setTranscriptSearch] = useState<string>('');
-  const [togglingTranscription, setTogglingTranscription] = useState<boolean>(false);
-  const [isLiveFollow, setIsLiveFollow] = useState<boolean>(true);
-  const [unreadCount, setUnreadCount] = useState<number>(0);
-  const isLiveFollowRef = useRef<boolean>(true);
-  const transcriptContainerRef = useRef<HTMLDivElement>(null);
   const captionTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const lastReadyTimeRef = useRef<string | null>(null);
@@ -221,13 +215,6 @@ export function LivePlayer({
                 return [data, ...prev].slice(0, 200);
               });
 
-              // If user is following live, keep view anchored to top (newest)
-              if (isLiveFollowRef.current && transcriptContainerRef.current) {
-                transcriptContainerRef.current.scrollTop = 0;
-              } else {
-                setUnreadCount((c) => c + 1);
-              }
-
               // Automatically clear active highlight after 5 seconds if speech pauses
               if (captionTimeoutRef.current) {
                 clearTimeout(captionTimeoutRef.current);
@@ -298,30 +285,6 @@ export function LivePlayer({
       setMarkers((prev) => prev.filter((m) => m.id !== markerId));
     } catch (err: unknown) {
       alert(err instanceof Error ? err.message : 'Failed to delete mark');
-    }
-  };
-
-  const handleToggleTranscription = async () => {
-    setTogglingTranscription(true);
-    try {
-      const res = await api.toggleTranscription(eventId);
-      setIsTranscribing(res.is_active);
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to toggle transcription');
-    } finally {
-      setTogglingTranscription(false);
-    }
-  };
-
-  const handleClearSubtitles = async () => {
-    if (!confirm('Clear all recorded subtitles and transcripts for this event?')) return;
-    try {
-      await api.clearSubtitles(eventId);
-      setSubtitles([]);
-      setActiveCaption(null);
-      setActiveSubtitleId(null);
-    } catch (err: unknown) {
-      alert(err instanceof Error ? err.message : 'Failed to clear subtitles');
     }
   };
 
@@ -457,14 +420,13 @@ export function LivePlayer({
       : `${streamStatus.hls_url}/`
     : null;
 
-  const filteredSubtitles = transcriptSearch.trim()
-    ? subtitles.filter((s) => s.text.toLowerCase().includes(transcriptSearch.toLowerCase()))
-    : subtitles;
-
   return (
     <div
       ref={containerRef}
-      className="bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col relative group shadow-2xl text-card-foreground"
+      className={cn(
+        "bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col relative group shadow-2xl text-card-foreground",
+        className
+      )}
     >
       {/* Player Header Bar */}
       <div className="px-4 py-3 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 bg-muted/30 z-10">
@@ -545,19 +507,6 @@ export function LivePlayer({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* 4G / Low Bandwidth OBS Guide Button */}
-          <Button
-            type="button"
-            size="xs"
-            variant="outline"
-            onClick={() => setShowBandwidthGuide(true)}
-            className="gap-1.5 text-[11px] text-amber-400 border-amber-500/30 hover:bg-amber-500/10"
-            title="Recommended 500kbps 720p settings to prevent 4G lag"
-          >
-            <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span className="hidden sm:inline">4G Preset (500kbps)</span>
-          </Button>
-
           {/* Quick Reload Stream (re-syncs 4G drops) */}
           {isLive && (
             <Button
@@ -574,27 +523,6 @@ export function LivePlayer({
               <RefreshCw className="w-3.5 h-3.5" />
             </Button>
           )}
-
-          {/* Transcript Feed Drawer Toggle */}
-          <Button
-            type="button"
-            size="xs"
-            variant={showTranscriptLog ? 'default' : 'outline'}
-            onClick={() => {
-              setShowTranscriptLog(!showTranscriptLog);
-              if (!showTranscriptLog) setShowMarkerLog(false);
-            }}
-            className="gap-1.5 text-xs"
-            title="Open Live Transcript & Closed Captions feed"
-          >
-            <FileText className="w-3.5 h-3.5" />
-            <span>Transcript</span>
-            {subtitles.length > 0 && (
-              <span className="text-[10px] px-1.5 bg-primary-foreground/20 rounded font-mono font-bold">
-                {subtitles.length}
-              </span>
-            )}
-          </Button>
 
           {/* Mark Live Moment Button */}
           {isLive && (
@@ -617,7 +545,6 @@ export function LivePlayer({
               variant={showMarkerLog ? 'default' : 'outline'}
               onClick={() => {
                 setShowMarkerLog((prev) => !prev);
-                if (!showMarkerLog) setShowTranscriptLog(false);
               }}
               className="gap-1 text-[11px]"
               title="View live marks & cues"
@@ -729,14 +656,16 @@ export function LivePlayer({
                 Switch Player to 720p
               </Button>
             )}
-            <Button
-              size="xs"
-              variant="outline"
-              onClick={() => setShowBandwidthGuide(true)}
-              className="text-[10px] h-6 border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
-            >
-              OBS Preset
-            </Button>
+            {onOpenStreamSetup && (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={onOpenStreamSetup}
+                className="text-[10px] h-6 border-amber-500/40 text-amber-300 hover:bg-amber-500/10"
+              >
+                OBS Settings
+              </Button>
+            )}
           </div>
         </div>
       )}
@@ -780,7 +709,7 @@ export function LivePlayer({
       )}
 
       {/* Video Viewport Container */}
-      <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden">
+      <div className="aspect-video bg-black relative flex items-center justify-center overflow-hidden flex-1">
         {/* Active Stream: Native HLS Video or WebRTC Iframe (only when user clicked to play) */}
         {isLive && hasStartedPlayback ? (
           playerMode === 'hls' ? (
@@ -893,204 +822,6 @@ export function LivePlayer({
               Bytes Ingested: <strong className="font-mono text-foreground">{(streamStatus.bytes_received / (1024 * 1024)).toFixed(1)} MB</strong>
             </span>
           </div>
-        </div>
-      )}
-
-      {/* Live Transcript & Closed Captions Drawer */}
-      {showTranscriptLog && (
-        <div
-          ref={transcriptContainerRef}
-          onScroll={() => {
-            if (!transcriptContainerRef.current) return;
-            const scrollTop = transcriptContainerRef.current.scrollTop;
-            if (scrollTop > 35) {
-              setIsLiveFollow(false);
-              isLiveFollowRef.current = false;
-            } else {
-              setIsLiveFollow(true);
-              isLiveFollowRef.current = true;
-              setUnreadCount(0);
-            }
-          }}
-          className="bg-card border-t border-border/60 p-4 max-h-72 overflow-y-auto relative"
-        >
-          {/* Floating Go to Now button when user scrolled away */}
-          {!isLiveFollow && (
-            <div className="sticky top-0 z-30 flex justify-center pb-2 pointer-events-none">
-              <Button
-                type="button"
-                size="sm"
-                onClick={() => {
-                  setIsLiveFollow(true);
-                  isLiveFollowRef.current = true;
-                  setUnreadCount(0);
-                  transcriptContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-                }}
-                className="pointer-events-auto h-7 px-3 rounded-full text-[11px] font-semibold gap-1.5 shadow-lg shadow-primary/20 animate-in fade-in slide-in-from-top-1"
-              >
-                <ArrowDown className="w-3 h-3 animate-bounce" />
-                <span>Go to Now</span>
-                {unreadCount > 0 && (
-                  <Badge variant="secondary" className="px-1.5 py-0 h-4 text-[10px] font-mono">
-                    +{unreadCount}
-                  </Badge>
-                )}
-              </Button>
-            </div>
-          )}
-
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <FileText className="w-4 h-4 text-primary" />
-              <span className="text-xs font-bold text-foreground uppercase tracking-wider">
-                Live Transcript ({subtitles.length})
-              </span>
-              <Badge variant="secondary" className="text-[10px] gap-1 font-normal">
-                <Sparkles className="w-3 h-3 text-primary" />
-                <span>Mesolitica Malaysian Whisper</span>
-              </Badge>
-              {isTranscribing ? (
-                <Badge variant="outline" className="text-[10px] gap-1 bg-emerald-500/15 border-emerald-500/30 text-emerald-400 font-semibold animate-pulse">
-                  <Mic className="w-2.5 h-2.5" />
-                  <span>LISTENING</span>
-                </Badge>
-              ) : (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  IDLE
-                </Badge>
-              )}
-
-              {/* Auto-Follow Live Mode Indicator / Toggle */}
-              <Button
-                type="button"
-                variant={isLiveFollow ? "outline" : "secondary"}
-                size="sm"
-                onClick={() => {
-                  const next = !isLiveFollow;
-                  setIsLiveFollow(next);
-                  isLiveFollowRef.current = next;
-                  if (next) {
-                    setUnreadCount(0);
-                    transcriptContainerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
-                  }
-                }}
-                className="h-6 text-[10px] px-2.5 rounded-full gap-1.5 font-medium"
-                title={isLiveFollow ? 'Auto-following live speech. Click to browse history.' : 'Auto-follow paused. Click to jump to live speech.'}
-              >
-                <span className={`w-1.5 h-1.5 rounded-full ${isLiveFollow ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-                <span>{isLiveFollow ? 'Live Follow: ON' : 'Paused (Scrolled)'}</span>
-              </Button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Search input */}
-              <div className="relative">
-                <Search className="w-3 h-3 absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  type="text"
-                  value={transcriptSearch}
-                  onChange={(e) => setTranscriptSearch(e.target.value)}
-                  placeholder="Search spoken lines..."
-                  className="pl-6 pr-2 h-7 text-[11px] w-36 focus:w-48 transition-all"
-                />
-              </div>
-
-              {/* SM / Admin controls */}
-              {isSMOrAdmin && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleToggleTranscription}
-                    disabled={togglingTranscription}
-                    className="h-7 text-[11px] px-2.5"
-                  >
-                    {isTranscribing ? 'Pause AI' : 'Start AI'}
-                  </Button>
-                  {subtitles.length > 0 && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleClearSubtitles}
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      title="Clear transcript"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </Button>
-                  )}
-                </>
-              )}
-
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowTranscriptLog(false)}
-                className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              >
-                <X className="w-3.5 h-3.5" />
-              </Button>
-            </div>
-          </div>
-
-          {subtitles.length === 0 ? (
-            <div className="py-6 text-center text-xs text-muted-foreground border border-dashed border-border/60 rounded-xl bg-muted/10">
-              No spoken lines transcribed yet. Audio from the live OBS broadcast is processed on the server using Malaysian Whisper.
-            </div>
-          ) : (
-            <div className="divide-y divide-border/40 border border-border/60 rounded-xl overflow-hidden bg-card">
-              {filteredSubtitles.map((sub, idx) => {
-                const localTime = sub.created_at
-                  ? new Date(sub.created_at).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })
-                  : '--:--:--';
-
-                const isActive = Boolean(
-                  (activeSubtitleId && (sub.id === activeSubtitleId || sub.text === activeCaption)) ||
-                  (!activeSubtitleId && activeCaption && (sub.text === activeCaption || idx === 0))
-                );
-
-                return (
-                  <div
-                    key={sub.id || idx}
-                    className={`group px-3 py-1.5 transition-colors flex items-center justify-between gap-3 text-xs ${
-                      isActive
-                        ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
-                        : 'border-l-4 border-l-transparent hover:bg-muted/40'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                      <span className={`shrink-0 flex items-center gap-1 font-mono text-[11px] select-none ${
-                        isActive ? 'text-primary font-semibold' : 'text-muted-foreground'
-                      }`}>
-                        <Clock className="w-3 h-3 text-muted-foreground/70" />
-                        <span>{localTime}</span>
-                      </span>
-                      <p className={`leading-normal flex-1 break-words transition-colors flex items-center gap-1.5 ${
-                        isActive ? 'text-primary font-semibold' : 'text-foreground font-medium'
-                      }`}>
-                        {sub.is_music && (
-                          <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                        )}
-                        <span>{sub.text}</span>
-                      </p>
-                      {isActive && (
-                        <Badge variant="default" className="text-[9px] px-1.5 py-0 h-4 font-mono font-bold shrink-0">
-                          LIVE
-                        </Badge>
-                      )}
-                    </div>
-
-                    <Badge variant="outline" className="text-[9px] uppercase font-mono px-1.5 py-0 text-muted-foreground shrink-0">
-                      {sub.language || 'ms'}
-                    </Badge>
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
       )}
 
@@ -1248,92 +979,6 @@ export function LivePlayer({
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      {/* 4G / Low Bandwidth Optimization Modal */}
-      <Dialog open={showBandwidthGuide} onOpenChange={setShowBandwidthGuide}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                <Zap className="w-4 h-4" />
-              </div>
-              <div>
-                <DialogTitle className="text-base font-bold">4G Multi-Viewer Stream Optimization</DialogTitle>
-                <DialogDescription className="text-xs">
-                  Max 500kbps 720p profile to prevent mobile buffering and lag.
-                </DialogDescription>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2 text-xs">
-            <div className="p-3 rounded-lg bg-muted/40 border border-border/60 text-muted-foreground leading-relaxed text-[11px]">
-              OBS defaults to <strong className="text-foreground">6,000 kbps (1080p)</strong>. When multiple viewers watch on 4G/LTE mobile networks, every viewer pulls 6 Mbps. 4G networks quickly drop frames and buffer.
-              Applying this <strong className="text-primary">720p @ 500kbps preset</strong> reduces server outbound bandwidth by 90% so all viewers stream smoothly.
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono bg-muted/20 p-3 rounded-xl border border-border/50">
-              <div>
-                <span className="text-muted-foreground text-[10px] block">OUTPUT RESOLUTION</span>
-                <span className="font-bold text-foreground">1280x720 (720p)</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-[10px] block">VIDEO BITRATE</span>
-                <span className="font-bold text-emerald-400">500 kbps (CBR)</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-[10px] block">AUDIO BITRATE</span>
-                <span className="font-bold text-foreground">64 kbps (AAC)</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-[10px] block">KEYFRAME INTERVAL</span>
-                <span className="font-bold text-foreground">2 seconds</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-[10px] block">MAX B-FRAMES</span>
-                <span className="font-bold text-foreground">0 (Zero Latency)</span>
-              </div>
-              <div>
-                <span className="text-muted-foreground text-[10px] block">EST. BANDWIDTH / VIEWER</span>
-                <span className="font-bold text-emerald-400">~0.56 Mbps</span>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const obsConfig = `OBS Studio 4G Low-Bandwidth Preset:
-• Base Canvas: 1920x1080 -> Output Resolution: 1280x720 (720p)
-• Rate Control: CBR
-• Video Bitrate: 500 Kbps (Max 800 Kbps)
-• Keyframe Interval: 2s
-• CPU Usage: veryfast
-• Profile: Main
-• Tune: zerolatency
-• Max B-frames: 0
-• Audio Bitrate: 64 Kbps AAC`;
-                copyToClipboard(obsConfig);
-                toast.success('OBS 500kbps 720p preset copied to clipboard');
-              }}
-              className="gap-1.5 text-xs"
-            >
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy OBS Preset</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={() => setShowBandwidthGuide(false)}
-            >
-              Done
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
