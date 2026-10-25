@@ -291,28 +291,13 @@ class WalkieService:
         asyncio.create_task(self._transcribe_call(event_id, transmission_id, raw_pcm, audio_url))
 
     async def _transcribe_call(self, event_id: str, call_id: str, raw_pcm: bytes, audio_url: str):
-        """Transcribes recorded call audio using faster-whisper."""
+        """Transcribes recorded call audio using the shared unified faster-whisper model (restricted to English, Malay, and Mandarin)."""
         try:
             audio_np = np.frombuffer(raw_pcm, dtype=np.int16).astype(np.float32) / 32768.0
-            
-            def _sync_transcribe():
-                model = transcription_service._get_model()
-                segments, info = model.transcribe(
-                    audio_np,
-                    task="transcribe",
-                    language=None,
-                    beam_size=1,
-                    temperature=0.0,
-                    condition_on_previous_text=False,
-                    without_timestamps=True,
-                    vad_filter=True,
-                    vad_parameters=dict(min_silence_duration_ms=250),
-                )
-                text = " ".join(s.text.strip() for s in segments).strip()
-                lang = info.language or "en"
-                return text, lang
 
-            transcript_text, detected_lang = await asyncio.to_thread(_sync_transcribe)
+            transcript_text, detected_lang = await asyncio.to_thread(
+                transcription_service.transcribe_walkie_call, audio_np
+            )
             if not transcript_text:
                 transcript_text = "(No dialogue detected)"
 

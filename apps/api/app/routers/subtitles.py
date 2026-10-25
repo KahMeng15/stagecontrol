@@ -110,10 +110,11 @@ def get_transcription_status(
     event, _ = event_and_member
     is_active = transcription_service.is_transcribing(event.id)
     count = db.query(Subtitle).filter(Subtitle.event_id == event.id).count()
+    active_model_desc = transcription_service.loaded_model_repo or transcription_service.active_model_name or "Mesolitica Malaysian Whisper"
     return SubtitleStatusResponse(
         is_active=is_active,
         event_id=event.id,
-        model_name="Mesolitica Malaysian Whisper Small (INT8)",
+        model_name=f"{active_model_desc} (Single Shared Engine)",
         subtitles_count=count
     )
 

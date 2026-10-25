@@ -31,10 +31,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Pre-cache whisper model to eliminate HF Hub rate limits and runtime downloads
-ENV HF_HOME=/app/cache/huggingface \
-    TRANSCRIPTION_MODEL_PATH="/app/cache/models"
-RUN python -c "from faster_whisper import WhisperModel; WhisperModel('tiny', device='cpu', compute_type='int8', download_root='/app/cache/models')"
+# Cache and model storage directory (mounted via /storage)
+ENV HF_HOME=/storage/models \
+    TRANSCRIPTION_MODEL_PATH="/storage/models"
 
 COPY alembic.ini .
 COPY alembic ./alembic

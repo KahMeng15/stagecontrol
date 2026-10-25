@@ -1,6 +1,10 @@
 import asyncio
+import gc
 import logging
+import os
 import re
+import shutil
+import threading
 import time
 import uuid
 from datetime import datetime, timezone
@@ -10,12 +14,79 @@ import numpy as np
 from fastapi import WebSocket
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import settings, MODELS_DIR
 from app.database import SessionLocal
 from app.models.event import Event
 from app.models.subtitle import Subtitle
+from app.models.settings import SystemSettings
 
 logger = logging.getLogger("stagecontrol.transcription")
+
+ALLOWED_LANGUAGES = {"en", "ms", "zh"}
+INITIAL_PROMPT = "English, Bahasa Melayu, and Mandarin Chinese 华语 dialogue, stage communications, cues, and theatre rehearsal."
+
+AVAILABLE_MODELS = [
+    {
+        "id": "mesolitica-large-v3-turbo",
+        "name": "Mesolitica Malaysian Whisper Large-v3-Turbo (v3)",
+        "repo_id": "SeamlessX/malaysian-faster-whisper-large-v3-turbo-v3-ct2",
+        "aliases": ["mesolitica/Malaysian-whisper-large-v3-turbo-v3", "SeamlessX/malaysian-faster-whisper-large-v3-turbo-v3-ct2"],
+        "category": "Mesolitica Malaysian",
+        "description": "Mesolitica's flagship Malaysian Whisper Large-v3-Turbo fine-tuned for Bahasa Melayu, Malaysian English (Manglish), Mandarin code-switching, and local Malaysian accents.",
+        "size_estimate": "1.6 GB",
+        "recommended": True,
+    },
+    {
+        "id": "mesolitica-medium-v2",
+        "name": "Mesolitica Malaysian Whisper Medium-v2",
+        "repo_id": "KeemOnHFace/malaysian-whisper-medium-v2-ct2",
+        "aliases": ["mesolitica/malaysian-whisper-medium-v2", "KeemOnHFace/malaysian-whisper-medium-v2-ct2"],
+        "category": "Mesolitica Malaysian",
+        "description": "Mesolitica's medium Malaysian model, balanced for accuracy and lower RAM requirements.",
+        "size_estimate": "1.5 GB",
+        "recommended": False,
+    },
+    {
+        "id": "mesolitica-small-v3",
+        "name": "Mesolitica Malaysian Whisper Small-v3",
+        "repo_id": "SeamlessX/malaysian-faster-whisper-small-v3-ct2",
+        "aliases": ["mesolitica/malaysian-whisper-small-v3", "SeamlessX/malaysian-faster-whisper-small-v3-ct2"],
+        "category": "Mesolitica Malaysian",
+        "description": "Mesolitica's small Malaysian model, optimized for low memory usage and ultra-fast CPU inference.",
+        "size_estimate": "480 MB",
+        "recommended": False,
+    },
+    {
+        "id": "whisper-large-v3-turbo",
+        "name": "Stock Whisper Large-v3-Turbo",
+        "repo_id": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+        "aliases": ["large-v3-turbo", "mobiuslabsgmbh/faster-whisper-large-v3-turbo"],
+        "category": "Stock Whisper",
+        "description": "OpenAI official Whisper Large-v3-Turbo architecture with 4 decoder layers for fast real-time transcription.",
+        "size_estimate": "1.6 GB",
+        "recommended": False,
+    },
+    {
+        "id": "whisper-large-v3",
+        "name": "Stock Whisper Large-v3",
+        "repo_id": "Systran/faster-whisper-large-v3",
+        "aliases": ["large-v3", "Systran/faster-whisper-large-v3"],
+        "category": "Stock Whisper",
+        "description": "OpenAI official full Whisper Large-v3 model with complete 32 decoder layers for maximum acoustic accuracy.",
+        "size_estimate": "3.1 GB",
+        "recommended": False,
+    },
+    {
+        "id": "whisper-tiny",
+        "name": "Stock Whisper Tiny (Dev / Fallback)",
+        "repo_id": "Systran/faster-whisper-tiny",
+        "aliases": ["tiny", "Systran/faster-whisper-tiny"],
+        "category": "Stock Whisper",
+        "description": "Ultra-lightweight fallback model for quick testing and low-spec environments.",
+        "size_estimate": "78 MB",
+        "recommended": False,
+    },
+]
 
 
 def is_music_text(text: str) -> bool:
@@ -78,6 +149,11 @@ class TranscriptionService:
         self.model = None
         self._model_loading = False
         self._model_lock = asyncio.Lock()
+        self._inference_lock = threading.Lock()
+        
+        self.active_model_name: str | None = None
+        self.loaded_model_repo: str | None = None
+        self.download_status: dict[str, dict] = {}
         
         # Active streaming tasks and processes keyed by event_id
         self.active_tasks: dict[str, asyncio.Task] = {}
@@ -89,35 +165,319 @@ class TranscriptionService:
         # Background monitor task for auto-starting/stopping
         self.monitor_task: asyncio.Task | None = None
 
+    @staticmethod
+    def resolve_repo_id(model_identifier: str) -> str:
+        """Resolves a model id or alias to the exact Hugging Face CTranslate2 repo id."""
+        clean_id = model_identifier.strip()
+        for m in AVAILABLE_MODELS:
+            if clean_id.lower() == m["id"].lower() or clean_id.lower() == m["repo_id"].lower():
+                return m["repo_id"]
+            for alias in m.get("aliases", []):
+                if clean_id.lower() == alias.lower():
+                    return m["repo_id"]
+        return clean_id
+
+    def _get_active_setting_from_db(self) -> str:
+        """Reads active model from system settings table, defaulting to Mesolitica Large v3 Turbo."""
+        db = SessionLocal()
+        try:
+            sys_setting = db.query(SystemSettings).filter(SystemSettings.id == "default").first()
+            if sys_setting and getattr(sys_setting, "transcription_model", None):
+                return sys_setting.transcription_model
+        except Exception as e:
+            logger.debug(f"Could not read transcription_model from DB: {e}")
+        finally:
+            db.close()
+        return settings.TRANSCRIPTION_MODEL
+
     def _get_model(self):
-        """Lazy loads the faster-whisper model on CPU with INT8 quantization."""
+        """Lazy loads the unified faster-whisper model on CPU with INT8 quantization."""
         if self.model is None:
             try:
-                import os
                 from faster_whisper import WhisperModel
-                cpu_threads = min(4, os.cpu_count() or 4)
-                model_name = settings.TRANSCRIPTION_MODEL
-                download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", "/storage/models")
-                if os.path.exists("/app/cache/models"):
-                    download_root = "/app/cache/models"
-                try:
-                    os.makedirs(download_root, exist_ok=True)
-                except Exception:
-                    pass
+                from huggingface_hub import scan_cache_dir
 
-                logger.info(f"Loading speech-to-text model: {model_name} (download_root={download_root}, cpu_threads={cpu_threads})")
+                cpu_threads = min(4, os.cpu_count() or 4)
+                download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", str(MODELS_DIR))
+                os.makedirs(download_root, exist_ok=True)
+
+                raw_model = self.active_model_name or self._get_active_setting_from_db()
+                target_repo = self.resolve_repo_id(raw_model)
+
+                # Scan local cache to verify whether the target model is downloaded
+                cached_repos = set()
+                try:
+                    report = scan_cache_dir(download_root)
+                    for r in report.repos:
+                        cached_repos.add(r.repo_id)
+                except Exception as cache_err:
+                    logger.debug(f"Error scanning local model cache: {cache_err}")
+
+                model_to_load = target_repo
+                if target_repo not in cached_repos:
+                    # If target is not downloaded, check if any model is available on disk to avoid crash
+                    if "Systran/faster-whisper-tiny" in cached_repos:
+                        model_to_load = "Systran/faster-whisper-tiny"
+                        logger.warning(
+                            f"Requested transcription model '{target_repo}' is not yet downloaded on disk. "
+                            f"Using cached fallback '{model_to_load}' until downloaded by client."
+                        )
+                    elif cached_repos:
+                        model_to_load = next(iter(cached_repos))
+                        logger.warning(
+                            f"Requested model '{target_repo}' not found. Using local cached model '{model_to_load}'."
+                        )
+                    else:
+                        logger.info(
+                            f"No models found in local cache. Loading '{target_repo}' (will download if internet is reachable)."
+                        )
+
+                logger.info(
+                    f"Loading unified speech-to-text model: {model_to_load} "
+                    f"(target: {target_repo}, download_root={download_root}, cpu_threads={cpu_threads})"
+                )
                 self.model = WhisperModel(
-                    model_name,
+                    model_to_load,
                     device="cpu",
                     compute_type="int8",
                     cpu_threads=cpu_threads,
-                    download_root=download_root
+                    download_root=download_root,
                 )
-                logger.info("Speech-to-text model loaded successfully.")
+                self.loaded_model_repo = model_to_load
+                self.active_model_name = target_repo
+                logger.info("Unified speech-to-text model loaded successfully.")
             except Exception as e:
                 logger.error(f"Failed to load speech-to-text model: {e}", exc_info=True)
                 raise
         return self.model
+
+    async def reload_model(self, model_identifier: str):
+        """Hot-reloads the unified speech-to-text model across both live feed and walkie-talkie."""
+        async with self._model_lock:
+            self._model_loading = True
+            try:
+                repo_id = self.resolve_repo_id(model_identifier)
+                logger.info(f"Reloading speech-to-text model to: {repo_id}")
+                with self._inference_lock:
+                    self.model = None
+                    gc.collect()
+
+                self.active_model_name = repo_id
+                await asyncio.to_thread(self._get_model)
+                logger.info(f"Successfully activated and loaded unified model: {repo_id}")
+            finally:
+                self._model_loading = False
+
+    def get_models_status(self) -> dict[str, Any]:
+        """Scans disk cache and returns current download, size, and active status for all models."""
+        from huggingface_hub import scan_cache_dir
+
+        download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", str(MODELS_DIR))
+        cached_info: dict[str, dict] = {}
+        if os.path.exists(download_root):
+            try:
+                report = scan_cache_dir(download_root)
+                for r in report.repos:
+                    cached_info[r.repo_id] = {
+                        "size_on_disk": r.size_on_disk_str,
+                        "size_bytes": r.size_on_disk,
+                    }
+            except Exception as e:
+                logger.debug(f"Failed to scan cache dir {download_root}: {e}")
+
+        active_repo = self.loaded_model_repo or self.active_model_name or self._get_active_setting_from_db()
+        active_repo = self.resolve_repo_id(active_repo)
+
+        models_list = []
+        known_repos = set()
+
+        for m in AVAILABLE_MODELS:
+            repo_id = m["repo_id"]
+            known_repos.add(repo_id.lower())
+            
+            is_downloaded = repo_id in cached_info
+            size_on_disk = cached_info[repo_id]["size_on_disk"] if is_downloaded else None
+            size_bytes = cached_info[repo_id]["size_bytes"] if is_downloaded else None
+            is_active = (active_repo.lower() == repo_id.lower())
+
+            curr_status = self.download_status.get(m["id"], {"status": "completed" if is_downloaded else "idle"})
+
+            models_list.append({
+                "id": m["id"],
+                "name": m["name"],
+                "repo_id": repo_id,
+                "category": m["category"],
+                "description": m["description"],
+                "size_estimate": m["size_estimate"],
+                "recommended": m.get("recommended", False),
+                "is_downloaded": is_downloaded,
+                "size_on_disk": size_on_disk,
+                "size_bytes": size_bytes,
+                "is_active": is_active,
+                "download_status": curr_status.get("status", "idle"),
+                "download_error": curr_status.get("error"),
+            })
+
+        # Also list any custom HuggingFace repos downloaded into cache
+        for repo_id, cinfo in cached_info.items():
+            if repo_id.lower() not in known_repos:
+                custom_id = f"custom-{repo_id.replace('/', '-')}"
+                is_active = (active_repo.lower() == repo_id.lower())
+                curr_status = self.download_status.get(custom_id, {"status": "completed"})
+                models_list.append({
+                    "id": custom_id,
+                    "name": f"Custom: {repo_id}",
+                    "repo_id": repo_id,
+                    "category": "Custom Model",
+                    "description": f"Custom Hugging Face model {repo_id} downloaded to server storage.",
+                    "size_estimate": cinfo["size_on_disk"],
+                    "recommended": False,
+                    "is_downloaded": True,
+                    "size_on_disk": cinfo["size_on_disk"],
+                    "size_bytes": cinfo["size_bytes"],
+                    "is_active": is_active,
+                    "download_status": curr_status.get("status", "completed"),
+                    "download_error": None,
+                })
+
+        active_name = active_repo
+        for m in models_list:
+            if m["is_active"]:
+                active_name = m["name"]
+                break
+
+        return {
+            "active_model": active_repo,
+            "active_model_name": active_name,
+            "is_loading": self._model_loading,
+            "restricted_languages": list(ALLOWED_LANGUAGES),
+            "restricted_language_names": ["English (en)", "Bahasa Melayu / Malaysia (ms)", "Mandarin Chinese (zh)"],
+            "singleton_shared": True,
+            "models": models_list,
+        }
+
+    async def download_model_async(self, model_id: str, custom_repo: str | None = None):
+        """Asynchronously triggers model weight download from Hugging Face Hub to persistent storage."""
+        repo_id = None
+        if custom_repo and custom_repo.strip():
+            repo_id = self.resolve_repo_id(custom_repo.strip())
+        else:
+            for m in AVAILABLE_MODELS:
+                if m["id"].lower() == model_id.lower():
+                    repo_id = m["repo_id"]
+                    break
+
+        if not repo_id:
+            repo_id = self.resolve_repo_id(model_id)
+
+        self.download_status[model_id] = {
+            "status": "downloading",
+            "progress": "Downloading model weights from Hugging Face...",
+            "error": None
+        }
+
+        async def _download_worker():
+            try:
+                from huggingface_hub import snapshot_download
+                download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", str(MODELS_DIR))
+                logger.info(f"Starting download for speech model: {repo_id} to {download_root}")
+
+                def _do_snapshot():
+                    snapshot_download(
+                        repo_id=repo_id,
+                        cache_dir=download_root,
+                    )
+
+                await asyncio.to_thread(_do_snapshot)
+                self.download_status[model_id] = {
+                    "status": "completed",
+                    "progress": "Download complete",
+                    "error": None
+                }
+                logger.info(f"Model download completed successfully: {repo_id}")
+            except Exception as e:
+                logger.error(f"Failed to download model {repo_id}: {e}", exc_info=True)
+                self.download_status[model_id] = {
+                    "status": "failed",
+                    "progress": "Download failed",
+                    "error": str(e)
+                }
+
+        asyncio.create_task(_download_worker())
+
+    def delete_model_files(self, model_id: str) -> bool:
+        """Deletes model files from disk to free up server storage."""
+        from huggingface_hub import scan_cache_dir
+
+        repo_id = None
+        for m in AVAILABLE_MODELS:
+            if m["id"].lower() == model_id.lower():
+                repo_id = m["repo_id"]
+                break
+
+        if not repo_id:
+            repo_id = self.resolve_repo_id(model_id)
+
+        download_root = os.getenv("TRANSCRIPTION_MODEL_PATH", str(MODELS_DIR))
+        deleted = False
+
+        if os.path.exists(download_root):
+            try:
+                report = scan_cache_dir(download_root)
+                for r in report.repos:
+                    if r.repo_id.lower() == repo_id.lower():
+                        revs = [rev.commit_hash for rev in r.revisions]
+                        del_strategy = report.delete_revisions(*revs)
+                        del_strategy.execute()
+                        deleted = True
+                        break
+            except Exception as e:
+                logger.debug(f"scan_cache_dir revision deletion exception: {e}")
+
+            clean_repo_name = f"models--{repo_id.replace('/', '--')}"
+            folder = os.path.join(download_root, clean_repo_name)
+            if os.path.exists(folder):
+                shutil.rmtree(folder, ignore_errors=True)
+                deleted = True
+
+        if model_id in self.download_status:
+            del self.download_status[model_id]
+
+        return deleted
+
+    def transcribe_walkie_call(self, audio_data: np.ndarray) -> tuple[str, str]:
+        """
+        Transcribes recorded walkie-talkie call audio using the shared singleton model
+        strictly restricted to English, Bahasa Melayu, and Mandarin.
+        """
+        model = self._get_model()
+        with self._inference_lock:
+            # 1. Constrain language detection to allowed languages
+            try:
+                _, _, all_language_probs = model.detect_language(audio=audio_data)
+                allowed_probs = [item for item in all_language_probs if item[0] in ALLOWED_LANGUAGES]
+                if allowed_probs:
+                    chosen_lang = max(allowed_probs, key=lambda x: x[1])[0]
+                else:
+                    chosen_lang = "en"
+            except Exception as lang_err:
+                logger.debug(f"Walkie language detection fallback to 'en': {lang_err}")
+                chosen_lang = "en"
+
+            segments, info = model.transcribe(
+                audio_data,
+                task="transcribe",
+                language=chosen_lang,
+                initial_prompt=INITIAL_PROMPT,
+                beam_size=1,
+                temperature=0.0,
+                condition_on_previous_text=False,
+                without_timestamps=True,
+                vad_filter=True,
+                vad_parameters=dict(min_silence_duration_ms=250),
+            )
+            text = " ".join(s.text.strip() for s in segments).strip()
+            return text, chosen_lang
 
     async def register_subscriber(self, event_id: str, websocket: WebSocket):
         """Registers a viewer or crew WebSocket to receive real-time subtitles."""
@@ -202,42 +562,53 @@ class TranscriptionService:
         return False
 
     def _transcribe_chunk_sync(self, audio_data: np.ndarray) -> tuple[list[dict], bool]:
-        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk."""
+        """Synchronously runs whisper inference on a float32 16kHz mono audio chunk with 3-language restriction."""
         model = self._get_model()
         results = []
         is_acoustics = detect_music_acoustics(audio_data)
 
         try:
-            # Clean theatre & stage rehearsal vocabulary priming without hallucinating music symbols
-            initial_prompt = "Stage rehearsal and live theatre dialogue in English and Bahasa Melayu."
-            segments, info = model.transcribe(
-                audio_data,
-                task="transcribe",
-                language=None,  # Automatically detect language per chunk
-                initial_prompt=initial_prompt,
-                beam_size=1,  # Fast greedy decoding for low-latency live captions
-                temperature=0.0,
-                condition_on_previous_text=False,  # Prevents repeating previous text or looping
-                without_timestamps=True,  # Significant speedup since timestamps are managed by the audio chunker
-                vad_filter=True,  # Silero VAD filters out laughter, breathing, and mic hum before decoding
-                vad_parameters=dict(min_silence_duration_ms=350),
-                no_speech_threshold=0.6,
-                compression_ratio_threshold=2.4,
-                repetition_penalty=1.2,  # Penalizes generating identical tokens repeatedly
-            )
-            for seg in segments:
-                text = seg.text.strip()
-                if text and len(text) > 1 and not self._is_hallucinated_repetition(text):
-                    is_seg_music = is_music_text(text) or (seg.no_speech_prob > 0.45)
+            with self._inference_lock:
+                # 1. Constrain language detection to English (en), Bahasa Melayu (ms), and Mandarin (zh)
+                try:
+                    _, _, all_language_probs = model.detect_language(audio=audio_data)
+                    allowed_probs = [item for item in all_language_probs if item[0] in ALLOWED_LANGUAGES]
+                    if allowed_probs:
+                        chosen_lang = max(allowed_probs, key=lambda x: x[1])[0]
+                    else:
+                        chosen_lang = "en"
+                except Exception as lang_err:
+                    logger.debug(f"Video chunk language detection fallback to 'en': {lang_err}")
+                    chosen_lang = "en"
 
-                    results.append({
-                        "text": text,
-                        "raw_text": text,
-                        "start": seg.start,
-                        "end": seg.end,
-                        "language": info.language or "en",
-                        "is_music": is_seg_music or is_acoustics,
-                    })
+                segments, info = model.transcribe(
+                    audio_data,
+                    task="transcribe",
+                    language=chosen_lang,  # Strictly clamped to en, ms, or zh
+                    initial_prompt=INITIAL_PROMPT,
+                    beam_size=1,  # Fast greedy decoding for low-latency live captions
+                    temperature=0.0,
+                    condition_on_previous_text=False,  # Prevents repeating previous text or looping
+                    without_timestamps=True,  # Significant speedup since timestamps are managed by the audio chunker
+                    vad_filter=True,  # Silero VAD filters out laughter, breathing, and mic hum before decoding
+                    vad_parameters=dict(min_silence_duration_ms=350),
+                    no_speech_threshold=0.6,
+                    compression_ratio_threshold=2.4,
+                    repetition_penalty=1.2,  # Penalizes generating identical tokens repeatedly
+                )
+                for seg in segments:
+                    text = seg.text.strip()
+                    if text and len(text) > 1 and not self._is_hallucinated_repetition(text):
+                        is_seg_music = is_music_text(text) or (seg.no_speech_prob > 0.45)
+
+                        results.append({
+                            "text": text,
+                            "raw_text": text,
+                            "start": seg.start,
+                            "end": seg.end,
+                            "language": chosen_lang,
+                            "is_music": is_seg_music or is_acoustics,
+                        })
         except Exception as e:
             logger.error(f"Error during whisper inference: {e}")
         return results, is_acoustics

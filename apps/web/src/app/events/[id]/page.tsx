@@ -11,6 +11,7 @@ import { LivePlayer } from '@/components/video/LivePlayer';
 import { RecordingArchive } from '@/components/video/RecordingArchive';
 import { BrowserStreamStudio } from '@/components/video/BrowserStreamStudio';
 import { BroadcastTranscriptionCard } from '@/components/video/BroadcastTranscriptionCard';
+import { TranscriptionModelSettings } from '@/components/settings/TranscriptionModelSettings';
 import ScriptTracker from '@/components/script/ScriptTracker';
 import { useWalkieTalkie } from '@/components/walkie/useWalkieTalkie';
 import { useAudioDucking } from '@/components/walkie/useAudioDucking';
@@ -71,9 +72,10 @@ import {
   Zap,
   Loader2,
   Camera,
+  Settings,
 } from 'lucide-react';
 
-export type TabKey = 'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'crew';
+export type TabKey = 'control' | 'script' | 'recordings' | 'walkie' | 'stream' | 'settings' | 'crew';
 
 function formatEventDate(dateString?: string | null): string {
   if (!dateString) return '';
@@ -96,7 +98,8 @@ export const TAB_TO_SLUG: Record<TabKey, string> = {
   recordings: 'recordings',
   walkie: 'walkietalkie',
   stream: 'videosetup',
-  crew: 'crewroster',
+  settings: 'settings',
+  crew: 'settings',
 };
 
 export const SLUG_TO_TAB: Record<string, TabKey> = {
@@ -120,9 +123,10 @@ export const SLUG_TO_TAB: Record<string, TabKey> = {
   stream: 'stream',
   setup: 'stream',
 
-  crewroster: 'crew',
-  'crew-roster': 'crew',
-  crew: 'crew',
+  settings: 'settings',
+  crewroster: 'settings',
+  'crew-roster': 'settings',
+  crew: 'settings',
 };
 
 function EventContent() {
@@ -642,9 +646,9 @@ function EventContent() {
               </TabsTrigger>
             )}
 
-            <TabsTrigger value="crew" className="gap-2 text-xs font-semibold py-2">
-              <Users className="w-4 h-4" />
-              <span>Crew Roster ({event.memberships?.length || 1})</span>
+            <TabsTrigger value="settings" className="gap-2 text-xs font-semibold py-2">
+              <Settings className="w-4 h-4" />
+              <span>Settings</span>
             </TabsTrigger>
           </TabsList>
 
@@ -715,7 +719,7 @@ function EventContent() {
                 />
               </div>
 
-              {/* Row 2, Right: Live Broadcast Transcription (matches Script Tracker height) */}
+              {/* Row 2, Right: Transcription (matches Script Tracker height) */}
               <div className="lg:col-span-1 flex flex-col">
                 <BroadcastTranscriptionCard
                   eventId={event.id}
@@ -1187,26 +1191,46 @@ Tune: zerolatency`;
             </TabsContent>
           )}
 
-          {/* Tab 5: Crew Roster */}
-          <TabsContent value="crew" className="space-y-6 mt-0">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-foreground">Event Crew Members</h2>
-                <p className="text-xs text-muted-foreground">
-                  Assigned crew members with role-based permissions and custom callsigns.
+          {/* Tab 5: Settings Page (Transcription Model & Crew Roster) */}
+          <TabsContent value="settings" className="space-y-8 mt-0">
+            {/* Section 1: AI Speech-to-Text Transcription Engine Settings */}
+            <div>
+              <div className="mb-4">
+                <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-primary" />
+                  <span>Speech-to-Text Engine Configuration</span>
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Select and manage the single unified Whisper model used to transcribe both the live program video feed and walkie-talkie audio.
                 </p>
               </div>
 
-              {isAdmin && (
-                <Button onClick={() => setShowAddMember(true)} className="gap-2">
-                  <UserPlus className="w-4 h-4" />
-                  <span>Add Crew Member</span>
-                </Button>
-              )}
+              <TranscriptionModelSettings canManage={isSMOrAdmin} />
             </div>
 
-            {/* Crew Table */}
-            <Card className="p-0 overflow-hidden">
+            {/* Section 2: Crew Roster Management */}
+            <div className="pt-6 border-t border-border/60">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h2 className="text-lg font-bold text-foreground flex items-center gap-2">
+                    <Users className="w-5 h-5 text-primary" />
+                    <span>Event Crew Members</span>
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Assigned crew members with role-based permissions and custom callsigns.
+                  </p>
+                </div>
+
+                {isAdmin && (
+                  <Button onClick={() => setShowAddMember(true)} className="gap-2 text-xs">
+                    <UserPlus className="w-4 h-4" />
+                    <span>Add Crew Member</span>
+                  </Button>
+                )}
+              </div>
+
+              {/* Crew Table */}
+              <Card className="p-0 overflow-hidden">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1255,7 +1279,8 @@ Tune: zerolatency`;
                 </TableBody>
               </Table>
             </Card>
-          </TabsContent>
+          </div>
+        </TabsContent>
         </Tabs>
       </main>
 

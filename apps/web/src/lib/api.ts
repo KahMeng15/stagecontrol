@@ -82,7 +82,35 @@ export interface SystemSettings {
   primary_domain: string | null;
   alternative_domain: string | null;
   registration_mode: 'open' | 'approval' | 'closed';
+  transcription_model?: string;
+  transcription_languages?: string;
   updated_at: string;
+}
+
+export interface TranscriptionModelInfo {
+  id: string;
+  name: string;
+  repo_id: string;
+  category: string;
+  description: string;
+  size_estimate: string;
+  recommended: boolean;
+  is_downloaded: boolean;
+  size_on_disk: string | null;
+  size_bytes: number | null;
+  is_active: boolean;
+  download_status: 'idle' | 'downloading' | 'completed' | 'failed';
+  download_error: string | null;
+}
+
+export interface TranscriptionSettings {
+  active_model: string;
+  active_model_name: string;
+  is_loading: boolean;
+  restricted_languages: string[];
+  restricted_language_names: string[];
+  singleton_shared: boolean;
+  models: TranscriptionModelInfo[];
 }
 
 export interface LoginLog {
@@ -360,6 +388,27 @@ export const api = {
     request<SystemSettings>('/settings', {
       method: 'PUT',
       body: JSON.stringify(payload),
+    }),
+
+  // Speech-to-Text Transcription Models & Settings (Unified Feed & Walkie)
+  getTranscriptionSettings: () =>
+    request<TranscriptionSettings>('/settings/transcription'),
+
+  downloadTranscriptionModel: (model_id: string, custom_repo?: string) =>
+    request<{ message: string; status: string }>('/settings/transcription/download', {
+      method: 'POST',
+      body: JSON.stringify({ model_id, custom_repo }),
+    }),
+
+  deleteTranscriptionModel: (model_id: string) =>
+    request<{ success: boolean; message: string }>(`/settings/transcription/models/${encodeURIComponent(model_id)}`, {
+      method: 'DELETE',
+    }),
+
+  activateTranscriptionModel: (model_id: string) =>
+    request<{ message: string; active_model: string; active_model_name: string }>('/settings/transcription/activate', {
+      method: 'POST',
+      body: JSON.stringify({ model_id }),
     }),
 
   // Admin User Management (Superadmin)

@@ -25,11 +25,22 @@ import {
   Volume2,
   Route,
   RouteOff,
+  Settings,
+  Layers,
+  MicOff,
 } from 'lucide-react';
 import { api, getWebSocketUrl, ScriptItem, ScriptBlock, ScriptSection, SubtitleItem } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu';
 import {
   Dialog,
   DialogContent,
@@ -383,13 +394,29 @@ export default function ScriptTracker({
     }
     return false;
   });
+  const [jumpWindowSize, setJumpWindowSize] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(`script_jump_window_${eventId}`);
+      if (saved !== null) {
+        const num = Number(saved);
+        if (!isNaN(num) && num >= 1 && num <= 20) return num;
+      }
+    }
+    return 5;
+  });
   const [wildcardThreshold, setWildcardThreshold] = useState(65); // 65% match default
   const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedSectionId, setSelectedSectionId] = useState<string>('all');
   const [teleprompterMode, setTeleprompterMode] = useState(false);
   const [isMusicActive, setIsMusicActive] = useState(false);
   const [activePerformanceName, setActivePerformanceName] = useState<string | null>(null);
   const musicTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Live stream status monitoring for auto-follow alert
+  const [hasLiveStream, setHasLiveStream] = useState<boolean | null>(null);
+  const [isStreamAlertDismissed, setIsStreamAlertDismissed] = useState(false);
+  const prevLiveRef = useRef<boolean | null>(null);
 
   // Import Modal
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -454,6 +481,9 @@ export default function ScriptTracker({
   const autoJumpRef = useRef(autoJump);
   autoJumpRef.current = autoJump;
 
+  const jumpWindowSizeRef = useRef(jumpWindowSize);
+  jumpWindowSizeRef.current = jumpWindowSize;
+
   const wildcardThresholdRef = useRef(wildcardThreshold);
   wildcardThresholdRef.current = wildcardThreshold;
 
@@ -462,6 +492,40 @@ export default function ScriptTracker({
 
   const selectedSectionIdRef = useRef(selectedSectionId);
   selectedSectionIdRef.current = selectedSectionId;
+
+  // Stream status monitoring for auto-follow alert
+  useEffect(() => {
+    if (isPlaybackMode) return;
+    let isDisposed = false;
+
+    const checkStream = async () => {
+      try {
+        const status = await api.getStreamStatus(eventId);
+        if (isDisposed) return;
+        const live = Boolean(status?.is_live);
+
+        // If stream transitioned from live to offline, immediately re-arm alert
+        if (prevLiveRef.current === true && !live) {
+          setIsStreamAlertDismissed(false);
+        } else if (live) {
+          setIsStreamAlertDismissed(false);
+        }
+        prevLiveRef.current = live;
+        setHasLiveStream(live);
+      } catch {
+        if (!isDisposed && prevLiveRef.current === null) {
+          setHasLiveStream(false);
+        }
+      }
+    };
+
+    checkStream();
+    const timer = setInterval(checkStream, 3000);
+    return () => {
+      isDisposed = true;
+      clearInterval(timer);
+    };
+  }, [eventId, isPlaybackMode]);
 
   // Track timestamp of last matched block to implement anti-jump cooldown
   const lastMatchTimeRef = useRef<number>(Date.now());
@@ -526,7 +590,7 @@ export default function ScriptTracker({
       // Find current or upcoming performance block
       let targetPerfBlock: ScriptBlock | null = null;
       if (currIdx >= 0) {
-        const maxForward = autoJump ? 8 : 5;
+        const maxForward = autoJump ? Math.max(8, jumpWindowSize) : jumpWindowSize;
         for (let i = currIdx; i <= Math.min(allBlocks.length - 1, currIdx + maxForward); i++) {
           if (isPerformanceBlock(allBlocks[i])) {
             targetPerfBlock = allBlocks[i];
@@ -561,10 +625,10 @@ export default function ScriptTracker({
     let bestId: string | null = null;
     let bestScore = 0;
 
-    // Nearby proximity search first (±5 lines around current position)
+    // Nearby proximity search first (±jumpWindowSize lines around current position)
     if (currIdx >= 0) {
-      const start = Math.max(0, currIdx - 5);
-      const end = Math.min(allBlocks.length - 1, currIdx + 5);
+      const start = Math.max(0, currIdx - jumpWindowSize);
+      const end = Math.min(allBlocks.length - 1, currIdx + jumpWindowSize);
       for (let i = start; i <= end; i++) {
         const blk = allBlocks[i];
         if (!blk.dialogue) continue;
@@ -603,7 +667,7 @@ export default function ScriptTracker({
         }
       }
     }
-  }, [isPlaybackMode, playbackTime, playbackSubtitles, allBlocks, wildcardThreshold, speechSyncEnabled, selectedSectionId, autoJump]);
+  }, [isPlaybackMode, playbackTime, playbackSubtitles, allBlocks, wildcardThreshold, speechSyncEnabled, selectedSectionId, autoJump, jumpWindowSize]);
 
   // WebSocket Listener for real-time speech matching and sync (stays connected permanently during live)
   useEffect(() => {
@@ -640,14 +704,14 @@ export default function ScriptTracker({
               }
             } else if (data.type === 'script_sync' || data.type === 'script_jump') {
               if (data.block_id) {
-                // If auto-jump is disabled, ignore distant automatic syncs beyond ±5 lines
+                // If auto-jump is disabled, ignore distant automatic syncs beyond ±jumpWindowSize lines
                 // (Manual jumps with type 'script_jump' triggered by user clicks are always respected)
                 if (data.type === 'script_sync' && !autoJumpRef.current) {
                   const currBlockId = activeBlockIdRef.current;
                   const currentBlocks = allBlocksRef.current;
                   const currIdx = currentBlocks.findIndex((b) => b.id === currBlockId);
                   const targetIdx = currentBlocks.findIndex((b) => b.id === data.block_id);
-                  if (currIdx >= 0 && targetIdx >= 0 && Math.abs(targetIdx - currIdx) > 5) {
+                  if (currIdx >= 0 && targetIdx >= 0 && Math.abs(targetIdx - currIdx) > jumpWindowSizeRef.current) {
                     return;
                   }
                 }
@@ -680,7 +744,7 @@ export default function ScriptTracker({
 
                 let targetPerfBlock: ScriptBlock | null = null;
                 if (currIdx >= 0) {
-                  const maxForward = autoJumpRef.current ? 8 : 5;
+                  const maxForward = autoJumpRef.current ? Math.max(8, jumpWindowSizeRef.current) : jumpWindowSizeRef.current;
                   for (let i = currIdx; i <= Math.min(currentBlocks.length - 1, currIdx + maxForward); i++) {
                     if (isPerformanceBlock(currentBlocks[i])) {
                       targetPerfBlock = currentBlocks[i];
@@ -735,13 +799,13 @@ export default function ScriptTracker({
                 const now = Date.now();
                 const timeSinceLastMatch = (now - lastMatchTimeRef.current) / 1000.0;
 
-                // Step 1: Check Local Window (±5 lines around current position)
+                // Step 1: Check Local Window (±jumpWindowSize lines around current position)
                 let bestLocalMatch: ScriptBlock | null = null;
                 let bestLocalScore = 0;
 
                 if (currIdx >= 0) {
-                  const startIdx = Math.max(0, currIdx - 5);
-                  const endIdx = Math.min(currentBlocks.length - 1, currIdx + 5);
+                  const startIdx = Math.max(0, currIdx - jumpWindowSizeRef.current);
+                  const endIdx = Math.min(currentBlocks.length - 1, currIdx + jumpWindowSizeRef.current);
 
                   for (let i = startIdx; i <= endIdx; i++) {
                     const blk = currentBlocks[i];
@@ -772,7 +836,7 @@ export default function ScriptTracker({
                     return;
                   }
 
-                  // If auto-jump is disabled, strictly lock to ±5 lines (do NOT search or jump beyond)
+                  // If auto-jump is disabled, strictly lock to ±jumpWindowSize lines (do NOT search or jump beyond)
                   if (!autoJumpRef.current) {
                     return;
                   }
@@ -782,8 +846,8 @@ export default function ScriptTracker({
                     return;
                   }
                 } else {
-                  // If no block selected yet, match the opening scene (lines 0 to 5)
-                  const endIdx = Math.min(currentBlocks.length - 1, 5);
+                  // If no block selected yet, match the opening scene (lines 0 to jumpWindowSize)
+                  const endIdx = Math.min(currentBlocks.length - 1, jumpWindowSizeRef.current);
                   for (let i = 0; i <= endIdx; i++) {
                     const blk = currentBlocks[i];
                     const targetText = `${blk.dialogue || ''} ${blk.cue || ''}`.trim();
@@ -975,27 +1039,28 @@ export default function ScriptTracker({
     }
   };
 
-  // Toggle auto-jump across scenes vs strict ±5 lines sync
-  const handleToggleAutoJump = async () => {
-    const nextValue = !autoJump;
-    setAutoJump(nextValue);
+  // Set auto-jump across entire script vs strict ±jumpWindowSize lines sync
+  const handleSetAutoJump = async (enable: boolean) => {
+    setAutoJump(enable);
     if (typeof window !== 'undefined') {
-      localStorage.setItem(`script_auto_jump_${eventId}`, String(nextValue));
+      localStorage.setItem(`script_auto_jump_${eventId}`, String(enable));
     }
 
-    toast.info(nextValue ? 'Scene Auto-Jump Enabled' : 'Strict ±5 Lines Mode Enabled', {
-      description: nextValue
-        ? 'Speech sync can jump across scenes when lines match'
-        : 'Speech sync will only look forward & backward 5 lines (no distant jumps)',
+    toast.info(enable ? 'Entire Script Auto-Jump Enabled' : `Strict ±${jumpWindowSize} Lines Mode Enabled`, {
+      description: enable
+        ? 'Speech sync can jump across any scene in the entire script'
+        : `Speech sync restricted to ±${jumpWindowSize} lines forward and backward`,
       duration: 3000,
     });
 
     try {
-      await api.toggleScriptAutoJump(eventId, nextValue);
+      await api.toggleScriptAutoJump(eventId, enable);
     } catch (err) {
       console.debug('Script auto-jump state updated locally', err);
     }
   };
+
+  const handleToggleAutoJump = () => handleSetAutoJump(!autoJump);
 
   // Find active block, active cues & upcoming cues
   const activeIndex = useMemo(() => {
@@ -1154,86 +1219,82 @@ export default function ScriptTracker({
                 </Badge>
               )}
             </div>
-            <p className="text-[11px] text-muted-foreground flex items-center gap-1.5 mt-0.5">
-              <span>{isPlaybackMode ? 'Take Replay Video Sync' : `Speech-to-Script Wildcard Sync (~${wildcardThreshold}% tolerance)`}</span>
-              <span className="text-muted-foreground/50">•</span>
-              <span className={autoJump ? 'text-blue-400 font-medium' : 'text-slate-400'}>
-                {autoJump ? 'Scene Jump: On' : 'Scope: ±5 Lines'}
-              </span>
-              {lastConfidence && (
-                <span className="text-emerald-400 font-mono font-medium">
-                  • {Math.round(lastConfidence * 100)}% match
-                </span>
-              )}
-            </p>
           </div>
         </div>
 
         {/* Action Controls */}
         <div className="flex items-center gap-2">
-          {/* Auto-Follow Toggle */}
-          <Button
-            size="sm"
-            variant={autoFollow ? 'default' : 'outline'}
-            onClick={() => setAutoFollow(!autoFollow)}
-            className="gap-1.5 text-xs h-8"
-            title={autoFollow ? 'Auto-scroll enabled' : 'Auto-scroll paused'}
-          >
-            {autoFollow ? <Play className="w-3.5 h-3.5 fill-current" /> : <Pause className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">Auto-Follow</span>
-          </Button>
-
-          {/* AI Speech Sync Toggle */}
-          <Button
-            size="sm"
-            variant={speechSyncEnabled ? 'default' : 'outline'}
-            onClick={() => setSpeechSyncEnabled(!speechSyncEnabled)}
-            className="gap-1.5 text-xs h-8"
-            title={isPlaybackMode ? 'Toggle Video-to-Script Auto-Sync' : 'Toggle Live Speech-to-Script Auto-Sync'}
-          >
-            <Sparkles className={`w-3.5 h-3.5 ${speechSyncEnabled ? 'animate-pulse text-emerald-400' : ''}`} />
-            <span className="hidden sm:inline">
-              {isPlaybackMode
-                ? (speechSyncEnabled ? 'Video Sync On' : 'Video Sync Off')
-                : (speechSyncEnabled ? 'AI Sync Active' : 'AI Sync Off')}
-            </span>
-          </Button>
-
-          {/* Auto-Jump Toggle */}
-          <Button
-            size="sm"
-            variant={autoJump ? 'default' : 'outline'}
-            onClick={handleToggleAutoJump}
-            className={`gap-1.5 text-xs h-8 transition-colors ${
-              autoJump
-                ? 'bg-blue-600 hover:bg-blue-500 text-white border-blue-500 shadow-sm shadow-blue-500/20'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            title={
-              autoJump
-                ? 'Auto-Jump is ON: Speech sync can jump across scenes when rehearsal jumps'
-                : 'Auto-Jump is OFF: Speech sync only looks forward and backward 5 lines'
-            }
-          >
-            {autoJump ? (
-              <Route className="w-3.5 h-3.5 text-blue-200" />
-            ) : (
-              <RouteOff className="w-3.5 h-3.5 text-muted-foreground" />
-            )}
-            <span className="hidden sm:inline">
-              {autoJump ? 'Auto-Jump' : 'Jump Off'}
-            </span>
-            <Badge
-              variant="outline"
-              className={`text-[9px] px-1 py-0 h-4 uppercase font-mono tracking-wider ${
-                autoJump
-                  ? 'border-blue-400/40 text-blue-100 bg-blue-700/50'
-                  : 'border-border text-muted-foreground bg-muted/60'
-              }`}
+          {/* Search Button */}
+          {script && (
+            <Button
+              size="sm"
+              variant={isSearchOpen || searchQuery ? 'default' : 'outline'}
+              onClick={() => setIsSearchOpen(!isSearchOpen)}
+              className="gap-1.5 text-xs h-8"
+              title={isSearchOpen ? 'Close Search' : 'Open search lines'}
             >
-              {autoJump ? 'Scenes' : '±5 lines'}
-            </Badge>
-          </Button>
+              <Search className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Search</span>
+              {searchQuery && (
+                <Badge variant="secondary" className="px-1 py-0 h-4 text-[9px] font-mono">
+                  {displayBlocks.length}
+                </Badge>
+              )}
+            </Button>
+          )}
+
+          {/* Scene Selector Menu */}
+          {script && script.sections && script.sections.length > 0 && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  size="sm"
+                  variant={selectedSectionId !== 'all' ? 'default' : 'outline'}
+                  className="gap-1.5 text-xs h-8 max-w-[170px]"
+                  title="Filter or jump by scene"
+                >
+                  <Layers className="w-3.5 h-3.5 shrink-0" />
+                  <span className="truncate">
+                    {selectedSectionId === 'all'
+                      ? `All Scenes (${script.sections.length})`
+                      : script.sections.find((s) => s.id === selectedSectionId)?.title || 'Scene'}
+                  </span>
+                  <ChevronDown className="w-3 h-3 opacity-60 shrink-0" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-64 max-h-72 overflow-y-auto">
+                <DropdownMenuLabel className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+                  Select Scene / Act
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => setSelectedSectionId('all')}
+                  className={`cursor-pointer text-xs justify-between ${
+                    selectedSectionId === 'all' ? 'font-semibold text-primary' : ''
+                  }`}
+                >
+                  <span>All Scenes</span>
+                  <Badge variant="outline" className="text-[10px] font-mono">
+                    {allBlocks.length} lines
+                  </Badge>
+                </DropdownMenuItem>
+                {script.sections.map((sec) => (
+                  <DropdownMenuItem
+                    key={sec.id}
+                    onClick={() => setSelectedSectionId(sec.id)}
+                    className={`cursor-pointer text-xs justify-between ${
+                      selectedSectionId === sec.id ? 'font-semibold text-primary' : ''
+                    }`}
+                  >
+                    <span className="truncate">{sec.title}</span>
+                    <Badge variant="outline" className="text-[10px] font-mono">
+                      {sec.blocks.length}
+                    </Badge>
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
 
           {/* Teleprompter Fullscreen Mode */}
           <Button
@@ -1245,114 +1306,239 @@ export default function ScriptTracker({
             {teleprompterMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
           </Button>
 
-          {/* Import Button */}
-          {isSMOrAdmin && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => setIsImportModalOpen(true)}
-              className="gap-1.5 text-xs h-8"
+          {/* Script Settings Menu (Similar to Video Settings) */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5 text-xs h-8 font-medium"
+                title="Configure script tracking, sync & tolerances"
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Script Settings</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-80 p-3.5 space-y-3.5 shadow-2xl bg-popover/95 backdrop-blur-md border-border/80"
             >
-              <Upload className="w-3.5 h-3.5 text-primary" />
-              <span>Import Script</span>
-            </Button>
-          )}
+              <DropdownMenuLabel className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground p-0">
+                Tracking & Sync Settings
+              </DropdownMenuLabel>
 
-          {/* Delete Script */}
-          {script && isSMOrAdmin && (
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              onClick={handleDeleteScript}
-              className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
-              title="Delete active script"
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          )}
+              {/* Auto-Follow Toggle */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    {autoFollow ? <Play className="w-3.5 h-3.5 text-emerald-400 fill-current" /> : <Pause className="w-3.5 h-3.5 text-muted-foreground" />}
+                    <span>Auto-Follow</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    Automatically keep active line in view
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={autoFollow}
+                  onClick={() => setAutoFollow(!autoFollow)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    autoFollow ? 'bg-primary' : 'bg-muted-foreground/30'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      autoFollow ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* AI Speech Sync Toggle */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <div className="text-xs font-medium text-foreground flex items-center gap-1.5">
+                    <Sparkles className={`w-3.5 h-3.5 ${speechSyncEnabled ? 'text-emerald-400' : 'text-muted-foreground'}`} />
+                    <span>{isPlaybackMode ? 'Video Sync' : 'AI Speech Sync'}</span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    {isPlaybackMode ? 'Synchronize script with video take' : 'Follow live spoken speech in real-time'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={speechSyncEnabled}
+                  onClick={() => setSpeechSyncEnabled(!speechSyncEnabled)}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    speechSyncEnabled ? 'bg-primary' : 'bg-muted-foreground/30'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-background shadow-lg ring-0 transition duration-200 ease-in-out ${
+                      speechSyncEnabled ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {/* Jump Scope Slider */}
+              <div
+                className="space-y-1.5 pt-2 border-t border-border/50"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-foreground flex items-center gap-1.5">
+                    <Route className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Jump Scope</span>
+                  </span>
+                  <Badge
+                    variant="outline"
+                    className={`text-[10px] font-mono font-semibold ${
+                      autoJump
+                        ? 'border-blue-500/40 text-blue-400 bg-blue-500/10'
+                        : 'border-border text-foreground'
+                    }`}
+                  >
+                    {autoJump ? 'Entire Script' : `±${jumpWindowSize} lines`}
+                  </Badge>
+                </div>
+                <input
+                  type="range"
+                  min="1"
+                  max="21"
+                  step="1"
+                  value={autoJump ? 21 : jumpWindowSize}
+                  onChange={(e) => {
+                    const val = Number(e.target.value);
+                    if (val === 21) {
+                      if (!autoJump) handleSetAutoJump(true);
+                    } else {
+                      if (autoJump) handleSetAutoJump(false);
+                      setJumpWindowSize(val);
+                      if (typeof window !== 'undefined') {
+                        localStorage.setItem(`script_jump_window_${eventId}`, String(val));
+                      }
+                    }
+                  }}
+                  className="w-full accent-blue-500 cursor-pointer h-1.5 bg-muted rounded-lg"
+                />
+                <div className="flex justify-between text-[9px] text-muted-foreground font-mono">
+                  <span>±1 line</span>
+                  <span>±10</span>
+                  <span>Entire Script</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  {autoJump
+                    ? 'Speech sync can jump across any scene in the entire script'
+                    : `Strict search window: ±${jumpWindowSize} lines forward & backward`}
+                </p>
+              </div>
+
+              {/* Wildcard Tolerance Slider */}
+              <div
+                className="space-y-1.5 pt-2 border-t border-border/50"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <div className="flex items-center justify-between text-xs">
+                  <span className="font-medium text-foreground flex items-center gap-1.5">
+                    <Sliders className="w-3.5 h-3.5 text-purple-400" />
+                    <span>Wildcard Tolerance</span>
+                  </span>
+                  <span className="font-mono text-purple-400 font-semibold text-xs">
+                    {wildcardThreshold}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="50"
+                  max="95"
+                  step="5"
+                  value={wildcardThreshold}
+                  onChange={(e) => setWildcardThreshold(Number(e.target.value))}
+                  className="w-full accent-purple-500 cursor-pointer h-1.5 bg-muted rounded-lg"
+                />
+                <div className="flex justify-between text-[9px] text-muted-foreground font-mono">
+                  <span>50% (Loose)</span>
+                  <span>95% (Strict)</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground leading-tight">
+                  Match tolerance for speech recognition
+                </p>
+              </div>
+
+              {/* Import Script Button */}
+              {isSMOrAdmin && (
+                <div className="pt-2 border-t border-border/50">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => setIsImportModalOpen(true)}
+                    className="w-full gap-2 text-xs h-8 justify-center font-medium"
+                  >
+                    <Upload className="w-3.5 h-3.5 text-primary" />
+                    <span>Import Script</span>
+                  </Button>
+                </div>
+              )}
+
+              {/* Delete Script Button */}
+              {script && isSMOrAdmin && (
+                <div className={isSMOrAdmin ? "pt-1" : "pt-2 border-t border-border/50"}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={handleDeleteScript}
+                    className="w-full gap-2 text-xs h-8 justify-center text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Delete Script</span>
+                  </Button>
+                </div>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
-      {/* Filter & Sensitivity Controls Sub-bar */}
-      {script && (
-        <div className="px-4 py-2 bg-muted/15 border-b border-border/60 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 flex-1 max-w-md">
-            {/* Search */}
-            <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="text"
-                placeholder="Search lines, speakers, or cues..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8 text-xs h-8"
-              />
-              {searchQuery && (
-                <button
-                  onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-
-            {/* Scene/Act Selector */}
-            {script.sections.length > 1 && (
-              <select
-                value={selectedSectionId}
-                onChange={(e) => setSelectedSectionId(e.target.value)}
-                className="rounded-lg border border-input bg-transparent px-2.5 py-1 text-xs text-foreground focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 outline-none h-8"
+      {/* Search Input Bar (Toggled open by Search button) */}
+      {isSearchOpen && (
+        <div className="px-4 py-2 bg-muted/20 border-b border-border/60 flex items-center gap-2 animate-in slide-in-from-top-1 duration-150">
+          <div className="relative flex-1">
+            <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              type="text"
+              placeholder="Search lines, speakers, or cues..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-8 text-xs h-8"
+              autoFocus
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
               >
-                <option value="all" className="bg-popover text-popover-foreground">All Scenes ({script.sections.length})</option>
-                {script.sections.map((sec) => (
-                  <option key={sec.id} value={sec.id} className="bg-popover text-popover-foreground">
-                    {sec.title} ({sec.blocks.length})
-                  </option>
-                ))}
-              </select>
+                <X className="w-3 h-3" />
+              </button>
             )}
           </div>
-
-          <div className="flex items-center gap-3">
-            {/* Auto-Jump Scope Quick Pill */}
-            <button
-              type="button"
-              onClick={handleToggleAutoJump}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-mono transition-all ${
-                autoJump
-                  ? 'bg-blue-500/15 border-blue-500/40 text-blue-300 hover:bg-blue-500/25'
-                  : 'bg-muted/40 border-border text-muted-foreground hover:text-foreground hover:bg-muted/70'
-              }`}
-              title={
-                autoJump
-                  ? 'Auto-Jump enabled across all scenes. Click to restrict to ±5 lines.'
-                  : 'Auto-Jump disabled (restricted to ±5 lines). Click to allow scene jumping.'
-              }
-            >
-              {autoJump ? <Route className="w-3.5 h-3.5 text-blue-400" /> : <RouteOff className="w-3.5 h-3.5 text-slate-400" />}
-              <span>{autoJump ? 'Allow Scene Jumps' : 'Strict ±5 Lines (No Jump)'}</span>
-            </button>
-
-            {/* Wildcard Tolerance Slider */}
-            <div className="flex items-center gap-2 text-slate-400">
-              <Sliders className="w-3.5 h-3.5 text-purple-400" />
-              <span>Wildcard:</span>
-              <input
-                type="range"
-                min="50"
-                max="95"
-                step="5"
-                value={wildcardThreshold}
-                onChange={(e) => setWildcardThreshold(Number(e.target.value))}
-                className="w-20 accent-purple-500 cursor-pointer"
-                title={`Wildcard tolerance: ${wildcardThreshold}% match required`}
-              />
-              <span className="font-mono text-purple-300 text-[11px] font-semibold">
-                {wildcardThreshold}%
-              </span>
-            </div>
-          </div>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => {
+              setIsSearchOpen(false);
+              setSearchQuery('');
+            }}
+            className="text-xs h-8 px-2 text-muted-foreground hover:text-foreground"
+          >
+            Close
+          </Button>
         </div>
       )}
 
@@ -1449,192 +1635,217 @@ export default function ScriptTracker({
         </div>
       )}
 
-      {/* Table Header Bar for Column Titles (Continuous Stage Cue Layout) */}
-      {script && displayBlocks.length > 0 && (
-        <div className="flex items-center px-3 py-1.5 bg-muted/40 border-b border-border/60 text-[11px] font-bold text-muted-foreground uppercase tracking-wider select-none shrink-0 sticky top-0 z-10">
-          <div className="w-28 sm:w-36 lg:w-44 shrink-0 flex items-center gap-1.5 pr-2">
-            <span className="w-5 text-muted-foreground/60">#</span>
-            <span>Speaker</span>
-          </div>
-          <div className="flex-1 min-w-0 pr-4">Dialogue</div>
-          <div className="w-48 sm:w-64 lg:w-80 shrink-0 text-right">Technical Notes</div>
-        </div>
-      )}
-
       {/* Script Lines Content Container (Continuous List, No Gaps) */}
       <div
         ref={listContainerRef}
-        className="relative flex-1 min-h-0 overflow-y-auto divide-y divide-border/40 bg-card"
+        className="relative flex-1 min-h-0 overflow-y-auto bg-card"
       >
-        {loading ? (
-          <div className="py-20 text-center flex flex-col items-center justify-center gap-3">
-            <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-xs text-muted-foreground">Loading synchronized script...</span>
-          </div>
-        ) : !script ? (
-          <div className="py-16 text-center border border-dashed border-border/60 rounded-2xl flex flex-col items-center justify-center p-8 m-4 bg-muted/10">
-            <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-3">
-              <FileText className="w-6 h-6" />
-            </div>
-            <h4 className="text-base font-bold text-foreground">No script loaded</h4>
-            <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1 mb-5 leading-relaxed">
-              Import a Word (.docx) document or paste raw text to enable real-time speech synchronization,
-              speaker line tracking, and technical cue alerts.
-            </p>
-
-            {isSMOrAdmin && (
-              <div className="flex flex-wrap items-center justify-center gap-3">
+        {/* No active stream incoming alert overlay */}
+        {!isPlaybackMode && hasLiveStream === false && !isStreamAlertDismissed && (
+          <div className="sticky top-0 inset-x-0 z-30 p-4 flex items-center justify-center pointer-events-auto">
+            <div className="bg-card/95 border border-amber-500/40 shadow-2xl rounded-2xl p-6 max-w-sm w-full text-center space-y-3.5 backdrop-blur-md animate-in fade-in zoom-in-95 duration-200">
+              <div className="w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-amber-400 flex items-center justify-center mx-auto">
+                <MicOff className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="text-sm font-bold text-foreground">
+                  No Active Audio Input
+                </h4>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  There is no active audio input to auto follow.
+                </p>
+              </div>
+              <div className="pt-1">
                 <Button
-                  onClick={() => setIsImportModalOpen(true)}
-                  className="gap-2 shadow-sm"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsStreamAlertDismissed(true)}
+                  className="text-xs h-8 px-5 font-medium"
                 >
-                  <Upload className="w-4 h-4" />
-                  <span>Import Script Document (.docx)</span>
+                  Dismiss
                 </Button>
               </div>
-            )}
+            </div>
           </div>
-        ) : displayBlocks.length === 0 ? (
-          <div className="py-12 text-center text-muted-foreground text-xs">
-            No lines match your search filter &quot;{searchQuery}&quot;.
-          </div>
-        ) : (
-          displayBlocks.map((block) => {
-            const isActive = block.id === activeBlockId;
-            const cueType = getCueType(block.cue);
+        )}
 
-            return (
-              <div
-                key={block.id}
-                data-block-id={block.id}
-                ref={isActive ? activeBlockRef : null}
-                onClick={() => handleJumpToBlock(block)}
-                className={`group relative flex items-start transition-colors cursor-pointer px-3 py-1.5 md:py-2 ${
-                  isActive
-                    ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
-                    : 'border-l-4 border-l-transparent hover:bg-muted/40'
-                }`}
-              >
-                {/* Left Column: Speaker & Line Number */}
-                <div className="w-28 sm:w-36 lg:w-44 shrink-0 pr-2 flex items-start gap-1.5 pt-0.5">
-                  <span className="text-[10px] font-mono text-muted-foreground w-5 shrink-0 pt-0.5 select-none">
-                    #{block.order_index + 1}
-                  </span>
+        <div
+          className={`divide-y divide-border/40 transition-all duration-300 ${
+            !isPlaybackMode && hasLiveStream === false && !isStreamAlertDismissed
+              ? 'filter blur-sm select-none pointer-events-none'
+              : ''
+          }`}
+        >
+          {loading ? (
+            <div className="py-20 text-center flex flex-col items-center justify-center gap-3">
+              <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-muted-foreground">Loading synchronized script...</span>
+            </div>
+          ) : !script ? (
+            <div className="py-16 text-center border border-dashed border-border/60 rounded-2xl flex flex-col items-center justify-center p-8 m-4 bg-muted/10">
+              <div className="w-12 h-12 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary mb-3">
+                <FileText className="w-6 h-6" />
+              </div>
+              <h4 className="text-base font-bold text-foreground">No script loaded</h4>
+              <p className="text-xs text-muted-foreground max-w-md mx-auto mt-1 mb-5 leading-relaxed">
+                Import a Word (.docx) document or paste raw text to enable real-time speech synchronization,
+                speaker line tracking, and technical cue alerts.
+              </p>
 
-                  {block.speaker ? (
-                    <span
-                      className={`px-1.5 py-0.5 rounded text-xs font-semibold capitalize truncate max-w-[85px] sm:max-w-[110px] lg:max-w-[130px] border ${getSpeakerColor(
-                        block.speaker
-                      )}`}
-                      title={block.speaker}
-                    >
-                      {block.speaker}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground/60 italic select-none">—</span>
-                  )}
-
-                  {/* Persistent Performance Act Badge */}
-                  {isPerformanceBlock(block) && (
-                    <span
-                      onClick={(e) => handleToggleBlockPerformance(e, block)}
-                      className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-sm cursor-pointer hover:bg-orange-500/25 transition-all"
-                      title={isSMOrAdmin ? "Performance line (Click to toggle)" : "Live Song / Performance Act"}
-                    >
-                      <Music className="w-2.5 h-2.5 text-orange-400 shrink-0" />
-                      <span>PERF</span>
-                    </span>
-                  )}
-
-                  {isPlaybackMode && blockTimestamps.has(block.id) && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={isActive ? "default" : "secondary"}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onSeek?.(blockTimestamps.get(block.id)!);
-                      }}
-                      className="h-5 px-1.5 text-[9px] font-mono gap-1 shrink-0"
-                      title="Jump video playback to this line"
-                    >
-                      <Play className="w-2 h-2 fill-current" />
-                      <span>{formatTime(blockTimestamps.get(block.id)!)}</span>
-                    </Button>
-                  )}
-
-                  {isActive && isPlaybackMode && (
-                    <Badge variant="default" className="text-[9px] px-1 py-0 h-4 font-mono font-bold shrink-0">
-                      PLAYING
-                    </Badge>
-                  )}
+              {isSMOrAdmin && (
+                <div className="flex flex-wrap items-center justify-center gap-3">
+                  <Button
+                    onClick={() => setIsImportModalOpen(true)}
+                    className="gap-2 shadow-sm"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Import Script Document (.docx)</span>
+                  </Button>
                 </div>
+              )}
+            </div>
+          ) : displayBlocks.length === 0 ? (
+            <div className="py-12 text-center text-muted-foreground text-xs">
+              No lines match your search filter &quot;{searchQuery}&quot;.
+            </div>
+          ) : (
+            displayBlocks.map((block) => {
+              const isActive = block.id === activeBlockId;
+              const cueType = getCueType(block.cue);
 
-                {/* Middle Column: Dialogue & Monoscript Actions */}
-                <div className="flex-1 min-w-0 pr-4">
-                  <DialogueContent
-                    text={block.dialogue}
-                    isActive={isActive}
-                    teleprompterMode={teleprompterMode}
-                  />
-                </div>
-
-                {/* Right Column: Technical Notes & Cues (Multi-line wrap, no cutoffs) */}
-                <div className="w-48 sm:w-64 lg:w-80 shrink-0 flex flex-col items-end gap-1 pt-0.5">
-                  <div className="flex items-start gap-1.5 w-full justify-end">
-                    {block.cue ? (
-                      <span
-                        className={`inline-flex items-start gap-1 px-2 py-0.5 rounded border text-[11px] font-mono font-medium max-w-full text-right break-words whitespace-normal leading-relaxed ${
-                          cueType === 'lighting'
-                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                            : cueType === 'audio'
-                            ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
-                            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
-                        }`}
-                        title={block.cue}
-                      >
-                        {cueType === 'lighting' ? (
-                          <Lightbulb className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
-                        ) : cueType === 'audio' ? (
-                          <Music className="w-3 h-3 text-purple-400 shrink-0 mt-0.5" />
-                        ) : (
-                          <FileText className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
-                        )}
-                        <span className="break-words text-right whitespace-normal">{block.cue}</span>
+              return (
+                <div
+                  key={block.id}
+                  data-block-id={block.id}
+                  ref={isActive ? activeBlockRef : null}
+                  onClick={() => handleJumpToBlock(block)}
+                  className={`group relative flex flex-col gap-1.5 transition-colors cursor-pointer px-3.5 py-2.5 ${
+                    isActive
+                      ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
+                      : 'border-l-4 border-l-transparent hover:bg-muted/40'
+                  }`}
+                >
+                  {/* Line Header: Line Number & Speaker Name in ONE LINE */}
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-[10px] font-mono text-muted-foreground select-none font-semibold w-7 shrink-0">
+                        #{block.order_index + 1}
                       </span>
-                    ) : !block.notes ? (
-                      <span className="text-xs text-muted-foreground/40 select-none">—</span>
-                    ) : null}
 
-                    {isSMOrAdmin && (
-                      <button
-                        type="button"
-                        onClick={(e) => handleToggleBlockPerformance(e, block)}
-                        className={`p-1 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
-                          block.is_performance
-                            ? 'text-orange-400 hover:text-orange-300'
-                            : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400'
-                        }`}
-                        title={block.is_performance ? "Remove performance tag" : "Tag line as performance act / musical number"}
-                      >
-                        <Music className="w-3 h-3" />
-                      </button>
-                    )}
+                      {block.speaker ? (
+                        <span
+                          className={`px-1.5 py-0.5 rounded text-xs font-semibold capitalize truncate max-w-[200px] border ${getSpeakerColor(
+                            block.speaker
+                          )}`}
+                          title={block.speaker}
+                        >
+                          {block.speaker}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground/60 italic select-none">
+                          Stage / Action
+                        </span>
+                      )}
+
+                      {/* Persistent Performance Act Badge */}
+                      {isPerformanceBlock(block) && (
+                        <span
+                          onClick={(e) => handleToggleBlockPerformance(e, block)}
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-sm cursor-pointer hover:bg-orange-500/25 transition-all"
+                          title={isSMOrAdmin ? "Performance line (Click to toggle)" : "Live Song / Performance Act"}
+                        >
+                          <Music className="w-2.5 h-2.5 text-orange-400 shrink-0" />
+                          <span>PERF</span>
+                        </span>
+                      )}
+
+                      {isPlaybackMode && blockTimestamps.has(block.id) && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={isActive ? "default" : "secondary"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSeek?.(blockTimestamps.get(block.id)!);
+                          }}
+                          className="h-5 px-1.5 text-[9px] font-mono gap-1 shrink-0"
+                          title="Jump video playback to this line"
+                        >
+                          <Play className="w-2 h-2 fill-current" />
+                          <span>{formatTime(blockTimestamps.get(block.id)!)}</span>
+                        </Button>
+                      )}
+
+                      {isActive && isPlaybackMode && (
+                        <Badge variant="default" className="text-[9px] px-1 py-0 h-4 font-mono font-bold shrink-0">
+                          PLAYING
+                        </Badge>
+                      )}
+                    </div>
+
+                    {/* Right Side: Technical Notes & Cues */}
+                    <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                      {block.cue && (
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-mono font-medium max-w-xs truncate ${
+                            cueType === 'lighting'
+                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                              : cueType === 'audio'
+                              ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                          }`}
+                          title={block.cue}
+                        >
+                          {cueType === 'lighting' ? (
+                            <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
+                          ) : cueType === 'audio' ? (
+                            <Music className="w-3 h-3 text-purple-400 shrink-0" />
+                          ) : (
+                            <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                          )}
+                          <span className="truncate">{block.cue}</span>
+                        </span>
+                      )}
+
+                      {block.notes && (
+                        <span
+                          className="text-[11px] text-muted-foreground font-mono max-w-xs truncate"
+                          title={block.notes}
+                        >
+                          {block.notes}
+                        </span>
+                      )}
+
+                      {isSMOrAdmin && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleToggleBlockPerformance(e, block)}
+                          className={`p-1 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
+                            block.is_performance
+                              ? 'text-orange-400 hover:text-orange-300'
+                              : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400'
+                          }`}
+                          title={block.is_performance ? "Remove performance tag" : "Tag line as performance act / musical number"}
+                        >
+                          <Music className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
                   </div>
 
-                  {block.notes && (
-                    <span
-                      className="text-[11px] text-muted-foreground font-mono text-right max-w-full break-words whitespace-normal leading-relaxed block"
-                      title={block.notes}
-                    >
-                      {block.notes}
-                    </span>
-                  )}
+                  {/* Below: Dialogue */}
+                  <div className="pl-9 pr-2">
+                    <DialogueContent
+                      text={block.dialogue}
+                      isActive={isActive}
+                      teleprompterMode={teleprompterMode}
+                    />
+                  </div>
                 </div>
-              </div>
-            );
-          })
-        )}
+              );
+            })
+          )}
+        </div>
       </div>
 
       {/* Teleprompter Mode Active Bottom Banner */}

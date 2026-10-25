@@ -133,10 +133,10 @@ function WalkieRecentCallItem({
         }
       }}
       className={cn(
-        "p-2.5 rounded-lg border text-xs transition-all space-y-1.5 shadow-2xs cursor-pointer select-none",
+        "px-3 py-2 text-xs transition-colors cursor-pointer select-none",
         isPlaying
-          ? "bg-primary/10 border-primary/50 shadow-sm ring-1 ring-primary/30"
-          : "bg-card/80 hover:bg-card hover:border-border border-border/60"
+          ? "bg-primary/10"
+          : "hover:bg-muted/40"
       )}
     >
       {/* Native HTML5 Audio Element in DOM tree with walkie tags */}
@@ -151,7 +151,7 @@ function WalkieRecentCallItem({
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {isPlaying && <Volume2 className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />}
-          <span className="font-semibold text-foreground truncate">
+          <span className={cn("font-semibold truncate", isPlaying ? "text-primary" : "text-foreground")}>
             {call.caller_name}
           </span>
         </div>
@@ -164,7 +164,7 @@ function WalkieRecentCallItem({
       {/* Playback Scrubber when playing */}
       {isPlaying && (
         <div
-          className="flex items-center gap-2 animate-in fade-in duration-150 py-0.5"
+          className="flex items-center gap-2 animate-in fade-in duration-150 py-0.5 mt-1"
           onClick={(e) => e.stopPropagation()}
         >
           <input
@@ -183,14 +183,14 @@ function WalkieRecentCallItem({
       )}
 
       {/* Transcription message */}
-      <div>
+      <div className="mt-0.5">
         {call.status === 'transcribing' ? (
           <span className="text-muted-foreground italic text-[11px] flex items-center gap-1">
             <span className="w-2 h-2 rounded-full border border-primary border-t-transparent animate-spin" />
             Transcribing audio with Whisper AI...
           </span>
         ) : (
-          <p className="text-xs text-foreground/90 font-normal leading-relaxed break-words whitespace-normal select-text">
+          <p className="text-xs text-foreground/90 font-normal leading-snug break-words whitespace-normal select-text">
             &ldquo;{call.transcription || '(No speech detected)'}&rdquo;
           </p>
         )}
@@ -296,14 +296,14 @@ export function WalkieCard({
       {/* Card Content */}
       <div className="p-4 flex flex-col flex-1 min-h-0 gap-3">
         {/* RECENT VOICE CALLS (Expands flexibly to fill available vertical space) */}
-        <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl p-2">
+        <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl overflow-hidden">
           <div
             ref={feedRef}
             onScroll={handleFeedScroll}
-            className="absolute inset-0 overflow-y-auto space-y-2 p-2 scroll-smooth"
+            className="absolute inset-0 overflow-y-auto divide-y divide-border/30 scroll-smooth"
           >
             {recentCalls.length === 0 ? (
-              <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-border/60 bg-muted/20 text-center space-y-1">
+              <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 text-center space-y-1">
                 <p className="text-xs font-semibold text-foreground">No recorded calls yet</p>
                 <p className="text-[11px] text-muted-foreground max-w-xs">
                   Hold the button below or press <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border/60">[SPACE]</kbd> to broadcast a voice message to all online crew.

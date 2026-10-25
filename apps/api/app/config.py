@@ -14,10 +14,12 @@ else:
 DB_DIR = STORAGE_DIR / "db"
 RECORDINGS_DIR = STORAGE_DIR / "recordings"
 WALKIE_DIR = STORAGE_DIR / "walkie_talkie"
+MODELS_DIR = STORAGE_DIR / "models"
 
 DB_DIR.mkdir(parents=True, exist_ok=True)
 RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
 WALKIE_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 DEFAULT_DB_PATH = DB_DIR / "stageflow.db"
 
@@ -42,8 +44,9 @@ class Settings(BaseSettings):
     MEDIAMTX_WEBRTC_URL: str = "http://localhost:8889"
     MEDIAMTX_RTMP_URL: str = "rtmp://localhost:1935"
 
-    # Whisper speech-to-text configuration (tiny is fast and CPU-friendly with ~1s latency)
-    TRANSCRIPTION_MODEL: str = "tiny"
+    # Whisper speech-to-text configuration (Shared unified engine for video & walkie)
+    TRANSCRIPTION_MODEL: str = "SeamlessX/malaysian-faster-whisper-large-v3-turbo-v3-ct2"
+    TRANSCRIPTION_MODEL_PATH: str = str(MODELS_DIR)
     TRANSCRIPTION_AUTO_START: bool = True
 
     model_config = SettingsConfigDict(

@@ -77,3 +77,49 @@ def test_settings_permissions_and_update(client):
     data = success_update.json()
     assert data["primary_domain"] == "https://stage.university.edu"
     assert data["alternative_domain"] == "http://192.168.1.100:3000"
+
+def test_transcription_settings_and_models(client):
+    # 1. Register superadmin
+    res_admin = client.post("/api/auth/register", json={
+        "username": "soundengineer",
+        "email": "sound@event.org",
+        "password": "Password123!"
+    })
+    token = res_admin.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 2. Get transcription settings
+    res = client.get("/api/settings/transcription", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert "active_model" in data
+    assert "active_model_name" in data
+    assert data["singleton_shared"] is True
+    assert set(data["restricted_languages"]) == {"en", "ms", "zh"}
+    assert len(data["models"]) >= 6
+
+    # Verify Mesolitica and Stock Whisper models exist in catalog
+    model_ids = [m["id"] for m in data["models"]]
+    assert "mesolitica-large-v3-turbo" in model_ids
+    assert "whisper-large-v3-turbo" in model_ids
+    assert "whisper-large-v3" in model_ids
+    assert "whisper-tiny" in model_ids
+
+    # 3. Trigger download test for tiny
+    res_dl = client.post("/api/settings/transcription/download", json={
+        "model_id": "whisper-tiny"
+    }, headers=headers)
+    assert res_dl.status_code == 200
+    assert res_dl.json()["status"] == "downloading"
+
+    # 4. Activate tiny (already on disk in test env)
+    res_act = client.post("/api/settings/transcription/activate", json={
+        "model_id": "whisper-tiny"
+    }, headers=headers)
+    assert res_act.status_code == 200
+    assert "Systran/faster-whisper-tiny" in res_act.json()["active_model"]
+
+    # 5. Cannot delete active model
+    res_del = client.delete("/api/settings/transcription/models/whisper-tiny", headers=headers)
+    assert res_del.status_code == 400
+    assert "Cannot delete the currently active model" in res_del.json()["detail"]

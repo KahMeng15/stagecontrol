@@ -66,6 +66,12 @@ async def lifespan(app: FastAPI):
                 if "registration_mode" not in settings_cols:
                     conn.execute(text("ALTER TABLE system_settings ADD COLUMN registration_mode VARCHAR(20) NOT NULL DEFAULT 'open'"))
                     conn.commit()
+                if "transcription_model" not in settings_cols:
+                    conn.execute(text("ALTER TABLE system_settings ADD COLUMN transcription_model VARCHAR(150) NOT NULL DEFAULT 'SeamlessX/malaysian-faster-whisper-large-v3-turbo-v3-ct2'"))
+                    conn.commit()
+                if "transcription_languages" not in settings_cols:
+                    conn.execute(text("ALTER TABLE system_settings ADD COLUMN transcription_languages VARCHAR(100) NOT NULL DEFAULT 'en,ms,zh'"))
+                    conn.commit()
             if "users" in tables:
                 user_cols = [c["name"] for c in insp.get_columns("users")]
                 if "approval_status" not in user_cols:
