@@ -82,7 +82,7 @@ def test_subtitles_crud_and_status(client, test_db):
     assert res.status_code == 200
     data = res.json()
     assert data["event_id"] == event.id
-    assert "Mesolitica" in data["model_name"]
+    assert "Single Shared Engine" in data["model_name"]
     assert data["subtitles_count"] == 0
 
     # 2. Add sample subtitles in DB

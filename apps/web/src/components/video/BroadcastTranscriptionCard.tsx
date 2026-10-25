@@ -174,17 +174,27 @@ export function BroadcastTranscriptionCard({
   };
 
   return (
-    <Card className={cn("flex flex-col border-border/70 shadow-sm relative overflow-hidden", className)}>
-      {/* Card Header */}
-      <CardHeader className="py-3 px-4 border-b border-border/40 shrink-0">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-primary" />
-            <CardTitle className="text-xs font-bold uppercase tracking-wider">
-              Transcription
-            </CardTitle>
-          </div>
+    <div
+      className={cn(
+        "bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col relative shadow-2xl text-card-foreground",
+        className
+      )}
+    >
+      {/* Card Header Bar */}
+      <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-muted/30 z-10 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Sparkles className="w-4 h-4 text-primary shrink-0" />
+          <span className="text-xs font-bold text-foreground uppercase tracking-wider truncate">
+            Transcription
+          </span>
+          {subtitles.length > 0 && (
+            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider h-5 px-1.5 shrink-0">
+              {subtitles.length} lines
+            </Badge>
+          )}
+        </div>
 
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           {/* SM / Admin Clear Action */}
           {isSMOrAdmin && subtitles.length > 0 && (
             <Button
@@ -192,16 +202,16 @@ export function BroadcastTranscriptionCard({
               variant="ghost"
               size="icon-xs"
               onClick={handleClearSubtitles}
-              className="h-7 w-7 text-muted-foreground hover:text-destructive shrink-0"
+              className="h-7 w-7 rounded text-muted-foreground hover:text-destructive shrink-0"
               title="Clear transcript"
             >
               <Trash2 className="w-3.5 h-3.5" />
             </Button>
           )}
         </div>
-      </CardHeader>
+      </div>
 
-      <CardContent className="p-3 flex flex-col flex-1 min-h-0 relative">
+      <div className="p-3 flex flex-col flex-1 min-h-0 relative">
         {/* Subtitles Feed List Container */}
         <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl overflow-hidden">
           <div
@@ -292,7 +302,7 @@ export function BroadcastTranscriptionCard({
             </div>
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }

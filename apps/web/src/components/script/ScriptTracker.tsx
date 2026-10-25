@@ -293,16 +293,167 @@ function getSpeakerColor(speaker?: string | null): string {
   return 'bg-blue-600/20 text-blue-300 border-blue-500/30';
 }
 
-function getCueType(cue?: string | null): 'lighting' | 'audio' | 'stage' | 'none' {
-  if (!cue) return 'none';
+export interface ParsedCue {
+  text: string;
+  type: 'lighting' | 'audio' | 'stage';
+}
+
+function getCueType(cue?: string | null): 'lighting' | 'audio' | 'stage' {
+  if (!cue) return 'stage';
   const c = cue.toLowerCase();
-  if (c.includes('light') || c.includes('spotlight') || c.includes('red') || c.includes('white') || c.includes('blue')) {
+  const hasAudio =
+    c.includes('audio') ||
+    c.includes('music') ||
+    c.includes('song') ||
+    c.includes('anthem') ||
+    c.includes('sound') ||
+    c.includes('soundtrack') ||
+    c.includes('track') ||
+    c.includes('sfx') ||
+    c.includes('fanfare') ||
+    c.includes('mic') ||
+    c.includes('playback') ||
+    c.includes('sq') ||
+    /^a\d+$/i.test(c) ||
+    c.includes('gamelan');
+
+  const hasLight =
+    c.includes('light') ||
+    c.includes('spotlight') ||
+    c.includes('blackout') ||
+    c.includes('fade to black') ||
+    c.includes('fade off') ||
+    c.includes('lx') ||
+    /^l\d+$/i.test(c) ||
+    c.includes('strobe') ||
+    c.includes('dim') ||
+    c.includes('wash') ||
+    c.includes('colourful') ||
+    c.includes('color') ||
+    c.includes('red') ||
+    c.includes('blue') ||
+    c.includes('white') ||
+    c.includes('green') ||
+    c.includes('orange') ||
+    c.includes('amber');
+
+  if (hasAudio && !hasLight) return 'audio';
+  if (hasLight && !hasAudio) return 'lighting';
+  if (hasAudio && hasLight) {
+    if (c.includes('soundtrack') || c.includes('sound') || c.includes('music') || c.includes('track')) {
+      return 'audio';
+    }
     return 'lighting';
   }
-  if (c.includes('audio') || c.includes('music') || c.includes('song') || c.includes('anthem') || c.includes('sound')) {
-    return 'audio';
-  }
   return 'stage';
+}
+
+function parseCueLines(rawCue?: string | null): ParsedCue[] {
+  if (!rawCue || !rawCue.trim()) return [];
+  const text = rawCue.trim();
+
+  // 1. Bracketed cues: [Cue 1] [Cue 2]
+  const bracketMatches = Array.from(text.matchAll(/\[([^\]]+)\]/g)).map((m) => m[1].trim());
+  if (bracketMatches.length >= 2) {
+    return bracketMatches.slice(0, 2).map((item) => ({
+      text: item,
+      type: getCueType(item),
+    }));
+  }
+
+  // 2. Explicit delimiters: newline, semicolon, pipe, double-slash
+  for (const delim of ['\n', ';', '|', '//']) {
+    if (text.includes(delim)) {
+      const parts = text.split(delim).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2) {
+        return parts.slice(0, 2).map((item) => ({
+          text: item,
+          type: getCueType(item),
+        }));
+      }
+    }
+  }
+
+  // 3. Explicit labels like 'Lights: ... / Sound: ...' or 'Audio: ... LX: ...'
+  const labeledSplit = text
+    .split(/(?=(?:lights?|lighting|spotlight|audio|sound|music|track|sfx|video|screen|props?|stage|lx|sq):\s*)/i)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  if (labeledSplit.length >= 2) {
+    return labeledSplit.slice(0, 2).map((item) => ({
+      text: item.replace(/^[\/,\s;&-]+|[\/,\s;&-]+$/g, '').trim(),
+      type: getCueType(item),
+    }));
+  }
+
+  // 4. Slash separator (e.g. 'Spotlight / Music Track 2')
+  if (text.includes('/') && !/\d+\/\d+/.test(text)) {
+    const parts = text.split('/').map((p) => p.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      return parts.slice(0, 2).map((item) => ({
+        text: item,
+        type: getCueType(item),
+      }));
+    }
+  }
+
+  // 5. Unstructured combination of Lighting and Sound (e.g. 'WHITE LIGHTS SERIOUS SOUNDTRACK')
+  const soundPattern = /\b(?:(?:crackling|serious|background|gamelan|dramatic|soft|ambient|gentle|upbeat|loud|fast|slow|intro|outro)\s+)?(?:music|soundtrack|sound(?:\s*(?:effects?|fx))?|audio|sfx|songs?|tracks?|playback)\b/i;
+  const lightPattern = /\b(?:lights?|spotlight|spot\s*light|blackout|fade\s+to\s+black|fade\s+off|strobe|wash)\b/i;
+
+  const soundMatch = soundPattern.exec(text);
+  const lightMatch = lightPattern.exec(text);
+
+  if (soundMatch && lightMatch) {
+    if (soundMatch.index > lightMatch.index) {
+      const p1 = text.slice(0, soundMatch.index).replace(/[,\s/;&-]+$/, '').trim();
+      const p2 = text.slice(soundMatch.index).replace(/^[,\s/;&-]+/, '').trim();
+      if (p1 && p2) {
+        return [
+          { text: p1, type: getCueType(p1) },
+          { text: p2, type: getCueType(p2) },
+        ];
+      }
+    } else if (lightMatch.index > soundMatch.index) {
+      const p1 = text.slice(0, lightMatch.index).replace(/[,\s/;&-]+$/, '').trim();
+      const p2 = text.slice(lightMatch.index).replace(/^[,\s/;&-]+/, '').trim();
+      if (p1 && p2) {
+        return [
+          { text: p1, type: getCueType(p1) },
+          { text: p2, type: getCueType(p2) },
+        ];
+      }
+    }
+  }
+
+  // 6. Delimited by '&' between sound and lights
+  if (text.includes('&')) {
+    const ampersandParts = text.split('&').map((p) => p.trim()).filter(Boolean);
+    if (ampersandParts.length >= 2) {
+      const t1 = getCueType(ampersandParts[0]);
+      const t2 = getCueType(ampersandParts[1]);
+      if (t1 !== t2 && (t1 === 'lighting' || t1 === 'audio') && (t2 === 'lighting' || t2 === 'audio')) {
+        return [
+          { text: ampersandParts[0], type: t1 },
+          { text: ampersandParts[1], type: t2 },
+        ];
+      }
+    }
+  }
+
+  // 7. Dance prefix with lighting/sound (e.g. 'DANCE 1 (BELIEVER) SPOTLIGHT ONLY')
+  const danceMatch = text.match(/^(dance\s+\d+[^:\n]*?(?:\([^)]+\))?)\s+((?:spotlight|lights?|music|sound|audio|track).+)$/i);
+  if (danceMatch) {
+    return [
+      { text: danceMatch[1].trim(), type: 'stage' },
+      { text: danceMatch[2].trim(), type: getCueType(danceMatch[2]) },
+    ];
+  }
+
+  return [{
+    text,
+    type: getCueType(text),
+  }];
 }
 
 interface DialogueContentProps {
@@ -417,6 +568,12 @@ export default function ScriptTracker({
   const [hasLiveStream, setHasLiveStream] = useState<boolean | null>(null);
   const [isStreamAlertDismissed, setIsStreamAlertDismissed] = useState(false);
   const prevLiveRef = useRef<boolean | null>(null);
+
+  // Scroll position & resync tracking
+  const [isScrolledAway, setIsScrolledAway] = useState(false);
+  const isScrolledAwayRef = useRef(false);
+  const isProgrammaticScrollingRef = useRef(false);
+  const hasInitialScrolledRef = useRef(false);
 
   // Import Modal
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -956,33 +1113,116 @@ export default function ScriptTracker({
     };
   }, [eventId, fetchScript, isPlaybackMode]);
 
-  // Smooth auto-scroll directly inside the script container
+  // Scroll to active block helper
+  const scrollToActiveBlock = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = listContainerRef.current;
+    if (!container || !activeBlockId) return false;
+
+    const element =
+      activeBlockRef.current ||
+      (container.querySelector(`[data-block-id="${activeBlockId}"]`) as HTMLElement);
+    if (!element) return false;
+
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const relativeTop = elementRect.top - containerRect.top;
+    const targetScrollTop =
+      container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
+
+    container.scrollTo({
+      top: Math.max(0, targetScrollTop),
+      behavior,
+    });
+    return true;
+  }, [activeBlockId]);
+
+  // On refresh / initial script load: auto-scroll to active line if autoFollow / sync is on
   useEffect(() => {
-    if (!autoFollow || !activeBlockId) return;
+    if (loading || !script || !activeBlockId) return;
+    if (!autoFollow && !speechSyncEnabled) return;
 
+    if (!hasInitialScrolledRef.current) {
+      hasInitialScrolledRef.current = true;
+      isProgrammaticScrollingRef.current = true;
+      setIsScrolledAway(false);
+      isScrolledAwayRef.current = false;
+
+      const t1 = setTimeout(() => {
+        scrollToActiveBlock('smooth');
+      }, 60);
+
+      const t2 = setTimeout(() => {
+        scrollToActiveBlock('smooth');
+        isProgrammaticScrollingRef.current = false;
+      }, 350);
+
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
+    }
+  }, [loading, script, activeBlockId, autoFollow, speechSyncEnabled, scrollToActiveBlock]);
+
+  // Auto-scroll when active block advances (only if user hasn't scrolled away)
+  useEffect(() => {
+    if (!autoFollow || !activeBlockId || loading) return;
+    if (isScrolledAwayRef.current) return;
+
+    isProgrammaticScrollingRef.current = true;
     const timer = setTimeout(() => {
-      const container = listContainerRef.current;
-      if (!container) return;
-      const element = activeBlockRef.current || (container.querySelector(`[data-block-id="${activeBlockId}"]`) as HTMLElement);
-      if (!element) return;
-
-      const containerRect = container.getBoundingClientRect();
-      const elementRect = element.getBoundingClientRect();
-      const relativeTop = elementRect.top - containerRect.top;
-      const targetScrollTop =
-        container.scrollTop + relativeTop - container.clientHeight / 2 + elementRect.height / 2;
-      container.scrollTo({
-        top: Math.max(0, targetScrollTop),
-        behavior: 'smooth',
-      });
+      scrollToActiveBlock('smooth');
+      setTimeout(() => {
+        isProgrammaticScrollingRef.current = false;
+      }, 400);
     }, 40);
 
     return () => clearTimeout(timer);
-  }, [activeBlockId, autoFollow]);
+  }, [activeBlockId, autoFollow, loading, scrollToActiveBlock]);
+
+  // Handle user manual scrolling to detect when scrolled away from active line
+  const handleScroll = useCallback(() => {
+    if (isProgrammaticScrollingRef.current) return;
+    const container = listContainerRef.current;
+    if (!container || !activeBlockId) return;
+
+    const element =
+      activeBlockRef.current ||
+      (container.querySelector(`[data-block-id="${activeBlockId}"]`) as HTMLElement);
+    if (!element) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+
+    // Check if the active line is visible in the container viewport (with padding buffer)
+    const isVisible =
+      elementRect.bottom >= containerRect.top + 20 &&
+      elementRect.top <= containerRect.bottom - 20;
+
+    const away = !isVisible;
+    if (isScrolledAwayRef.current !== away) {
+      isScrolledAwayRef.current = away;
+      setIsScrolledAway(away);
+    }
+  }, [activeBlockId]);
+
+  // Re-sync button click handler
+  const handleResyncClick = () => {
+    setAutoFollow(true);
+    isProgrammaticScrollingRef.current = true;
+    isScrolledAwayRef.current = false;
+    setIsScrolledAway(false);
+    scrollToActiveBlock('smooth');
+    setTimeout(() => {
+      isProgrammaticScrollingRef.current = false;
+    }, 500);
+  };
 
   // Jump to specific block manually
   const handleJumpToBlock = async (block: ScriptBlock) => {
     setActiveBlockId(block.id);
+    isProgrammaticScrollingRef.current = true;
+    isScrolledAwayRef.current = false;
+    setIsScrolledAway(false);
     lastMatchTimeRef.current = Date.now();
     onBlockSelect?.(block);
 
@@ -1203,34 +1443,28 @@ export default function ScriptTracker({
       }`}
     >
       {/* Header Bar */}
-      <div className="p-4 border-b border-border/60 bg-muted/30 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-primary/10 border border-primary/20 flex items-center justify-center text-primary">
-            <FileText className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm font-bold text-foreground">
-                {script ? script.title : (isPlaybackMode ? 'Imported Script' : 'Live Script & Cue Tracker')}
-              </h3>
-              {script && (
-                <Badge variant="secondary" className="font-mono text-[10px]">
-                  v{script.version} • {script.total_blocks} lines
-                </Badge>
-              )}
-            </div>
-          </div>
+      <div className="px-4 py-3 border-b border-border/60 bg-muted/30 flex items-center justify-between gap-3 z-10 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <FileText className="w-4 h-4 text-primary shrink-0" />
+          <span className="text-xs font-bold text-foreground uppercase tracking-wider truncate">
+            {script ? script.title : (isPlaybackMode ? 'Imported Script' : 'Live Script & Cue Tracker')}
+          </span>
+          {script && (
+            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider h-5 px-1.5 shrink-0">
+              v{script.version} • {script.total_blocks} lines
+            </Badge>
+          )}
         </div>
 
-        {/* Action Controls */}
-        <div className="flex items-center gap-2">
-          {/* Search Button */}
+        {/* Top Right Action Controls: Search, Scenes, Settings, Fullscreen */}
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
+          {/* 1. Search Button */}
           {script && (
             <Button
-              size="sm"
+              size="xs"
               variant={isSearchOpen || searchQuery ? 'default' : 'outline'}
               onClick={() => setIsSearchOpen(!isSearchOpen)}
-              className="gap-1.5 text-xs h-8"
+              className="gap-1.5 text-[11px] h-7 px-2.5 font-medium"
               title={isSearchOpen ? 'Close Search' : 'Open search lines'}
             >
               <Search className="w-3.5 h-3.5" />
@@ -1243,20 +1477,20 @@ export default function ScriptTracker({
             </Button>
           )}
 
-          {/* Scene Selector Menu */}
+          {/* 2. Scenes Selector Menu */}
           {script && script.sections && script.sections.length > 0 && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
-                  size="sm"
+                  size="xs"
                   variant={selectedSectionId !== 'all' ? 'default' : 'outline'}
-                  className="gap-1.5 text-xs h-8 max-w-[170px]"
+                  className="gap-1.5 text-[11px] h-7 px-2.5 font-medium max-w-[160px]"
                   title="Filter or jump by scene"
                 >
                   <Layers className="w-3.5 h-3.5 shrink-0" />
                   <span className="truncate">
                     {selectedSectionId === 'all'
-                      ? `All Scenes (${script.sections.length})`
+                      ? `Scenes (${script.sections.length})`
                       : script.sections.find((s) => s.id === selectedSectionId)?.title || 'Scene'}
                   </span>
                   <ChevronDown className="w-3 h-3 opacity-60 shrink-0" />
@@ -1296,27 +1530,17 @@ export default function ScriptTracker({
             </DropdownMenu>
           )}
 
-          {/* Teleprompter Fullscreen Mode */}
-          <Button
-            size="icon-sm"
-            variant={teleprompterMode ? 'default' : 'outline'}
-            onClick={() => setTeleprompterMode(!teleprompterMode)}
-            title={teleprompterMode ? 'Exit Fullscreen Teleprompter' : 'Presenter / Teleprompter Mode'}
-          >
-            {teleprompterMode ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-          </Button>
-
-          {/* Script Settings Menu (Similar to Video Settings) */}
+          {/* 3. Settings Menu (Script Settings) */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button
-                size="sm"
+                size="xs"
                 variant="outline"
-                className="gap-1.5 text-xs h-8 font-medium"
+                className="gap-1.5 text-[11px] h-7 px-2.5 font-medium"
                 title="Configure script tracking, sync & tolerances"
               >
                 <Settings className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">Script Settings</span>
+                <span className="hidden sm:inline">Settings</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -1503,6 +1727,17 @@ export default function ScriptTracker({
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* 4. Fullscreen Mode */}
+          <Button
+            size="icon-xs"
+            variant={teleprompterMode ? 'default' : 'outline'}
+            onClick={() => setTeleprompterMode(!teleprompterMode)}
+            className="h-7 w-7 rounded"
+            title={teleprompterMode ? 'Exit Fullscreen Teleprompter' : 'Presenter / Fullscreen Mode'}
+          >
+            {teleprompterMode ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+          </Button>
         </div>
       </div>
 
@@ -1553,16 +1788,16 @@ export default function ScriptTracker({
         if (!isPerformanceActive) return null;
 
         return (
-          <div className="px-4 py-2 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-3 overflow-x-auto text-xs animate-in fade-in duration-150">
-            <div className="flex items-center gap-1.5 text-orange-400 font-semibold uppercase tracking-wider shrink-0">
-              <Music className="w-3.5 h-3.5 text-orange-400" />
-              <span className="font-bold">Performance Active:</span>
+          <div className="px-3 py-1.5 bg-orange-500/10 border-b border-orange-500/20 flex items-center gap-2 overflow-x-auto text-xs animate-in fade-in duration-150">
+            <div className="flex items-center gap-1 text-orange-400 font-semibold uppercase tracking-wider shrink-0 text-[11px]">
+              <Music className="w-3 h-3 text-orange-400" />
+              <span className="font-bold">Performance:</span>
             </div>
 
-            <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
-              <div className="px-2.5 py-1 rounded-lg border text-xs flex items-center gap-2 shrink-0 bg-orange-500/15 border-orange-500/40 text-orange-300 shadow-sm">
-                <Music className="w-3.5 h-3.5 text-orange-400 shrink-0" />
-                <span className="font-mono font-medium whitespace-nowrap">
+            <div className="flex items-center gap-1.5 flex-1 overflow-x-auto py-0.5">
+              <div className="px-2 py-0.5 rounded-md border text-[11px] flex items-center gap-1.5 shrink-0 bg-orange-500/15 border-orange-500/40 text-orange-300 shadow-2xs">
+                <Music className="w-3 h-3 text-orange-400 shrink-0" />
+                <span className="font-mono text-[11px] font-medium whitespace-nowrap truncate max-w-sm sm:max-w-md">
                   {performanceTitle}
                 </span>
               </div>
@@ -1573,73 +1808,133 @@ export default function ScriptTracker({
 
       {/* Active Cues Alert Banner for Technical Crew (Green) */}
       {activeCues.length > 0 && (
-        <div className="px-4 py-2 bg-emerald-500/10 border-b border-emerald-500/20 flex items-center gap-3 overflow-x-auto text-xs">
-          <div className="flex items-center gap-1.5 text-emerald-400 font-semibold uppercase tracking-wider shrink-0">
-            <Play className="w-3.5 h-3.5 text-emerald-400 fill-emerald-400" />
+        <div className="px-3 py-1.5 bg-emerald-500/10 border-b border-emerald-500/20 flex items-center gap-2 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1 text-emerald-400 font-semibold uppercase tracking-wider shrink-0 text-[11px]">
+            <Play className="w-3 h-3 text-emerald-400 fill-emerald-400" />
             <span className="font-bold">Active Cues:</span>
           </div>
 
-          <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
-            {activeCues.map((item) => (
-              <div
-                key={item.block.id}
-                onClick={() => handleJumpToBlock(item.block)}
-                className="cursor-pointer px-2.5 py-1 rounded-lg border text-xs flex items-center gap-2 shrink-0 transition-all hover:scale-[1.02] shadow-sm bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
-              >
-                {item.type === 'lighting' ? (
-                  <Lightbulb className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                ) : item.type === 'audio' ? (
-                  <Music className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                ) : (
-                  <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                )}
-                <Badge variant="outline" className="font-bold text-[10px] uppercase tracking-wider px-1.5 py-0 h-4 bg-background/80 shrink-0 border-emerald-500/30 text-emerald-400">
-                  {item.isCurrentLine ? 'LIVE NOW' : `LINE #${item.block.order_index + 1}`}
-                </Badge>
-                <span className="font-mono font-medium whitespace-nowrap">{item.block.cue}</span>
-              </div>
-            ))}
+          <div className="flex items-center gap-1.5 flex-1 overflow-x-auto py-0.5">
+            {activeCues.map((item) => {
+              const cueLines = parseCueLines(item.block.cue);
+              return (
+                <div
+                  key={item.block.id}
+                  onClick={() => handleJumpToBlock(item.block)}
+                  className="cursor-pointer px-2 py-0.5 rounded-md border text-[11px] flex items-center gap-1.5 shrink-0 transition-all hover:scale-[1.01] shadow-2xs bg-emerald-500/15 border-emerald-500/40 text-emerald-300"
+                >
+                  <Badge variant="outline" className="font-bold text-[9px] uppercase tracking-wider px-1 py-0 h-3.5 bg-background/80 shrink-0 border-emerald-500/30 text-emerald-400">
+                    {item.isCurrentLine ? 'LIVE NOW' : `LINE #${item.block.order_index + 1}`}
+                  </Badge>
+                  {cueLines.length > 1 ? (
+                    <div className="flex flex-col gap-0.5">
+                      {cueLines.map((l, lIdx) => (
+                        <span key={lIdx} className="font-mono text-[10px] font-medium whitespace-nowrap flex items-center gap-1">
+                          {l.type === 'lighting' ? (
+                            <Lightbulb className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                          ) : l.type === 'audio' ? (
+                            <Music className="w-2.5 h-2.5 text-purple-400 shrink-0" />
+                          ) : (
+                            <FileText className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                          )}
+                          <span>{l.text}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 font-mono text-[10px] font-medium whitespace-nowrap">
+                      {item.type === 'lighting' ? (
+                        <Lightbulb className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                      ) : item.type === 'audio' ? (
+                        <Music className="w-2.5 h-2.5 text-purple-400 shrink-0" />
+                      ) : (
+                        <FileText className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                      )}
+                      <span>{item.block.cue}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* Upcoming Cues Alert Banner for Technical Crew (Blue) */}
       {upcomingCues.length > 0 && (
-        <div className="px-4 py-2 bg-blue-500/10 border-b border-blue-500/20 flex items-center gap-3 overflow-x-auto text-xs">
-          <div className="flex items-center gap-1.5 text-blue-400 font-semibold uppercase tracking-wider shrink-0">
-            <Radio className="w-3.5 h-3.5 text-blue-400" />
+        <div className="px-3 py-1.5 bg-blue-500/10 border-b border-blue-500/20 flex items-center gap-2 overflow-x-auto text-xs">
+          <div className="flex items-center gap-1 text-blue-400 font-semibold uppercase tracking-wider shrink-0 text-[11px]">
+            <Radio className="w-3 h-3 text-blue-400" />
             <span className="font-bold">Upcoming Cues:</span>
           </div>
 
-          <div className="flex items-center gap-2 flex-1 overflow-x-auto py-0.5">
-            {upcomingCues.slice(0, 3).map((item) => (
-              <div
-                key={item.block.id}
-                onClick={() => handleJumpToBlock(item.block)}
-                className="cursor-pointer px-2.5 py-1 rounded-lg border text-xs flex items-center gap-2 shrink-0 transition-all hover:scale-[1.02] shadow-sm bg-blue-500/15 border-blue-500/40 text-blue-300"
-              >
-                {item.type === 'lighting' ? (
-                  <Lightbulb className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                ) : item.type === 'audio' ? (
-                  <Music className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                ) : (
-                  <FileText className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                )}
-                <Badge variant="outline" className="font-bold text-[10px] uppercase tracking-wider px-1.5 py-0 h-4 bg-background/80 shrink-0 border-blue-500/30 text-blue-400">
-                  IN {item.distance} LINE{item.distance > 1 ? 'S' : ''}
-                </Badge>
-                <span className="font-mono font-medium whitespace-nowrap">{item.block.cue}</span>
-              </div>
-            ))}
+          <div className="flex items-center gap-1.5 flex-1 overflow-x-auto py-0.5">
+            {upcomingCues.slice(0, 3).map((item) => {
+              const cueLines = parseCueLines(item.block.cue);
+              return (
+                <div
+                  key={item.block.id}
+                  onClick={() => handleJumpToBlock(item.block)}
+                  className="cursor-pointer px-2 py-0.5 rounded-md border text-[11px] flex items-center gap-1.5 shrink-0 transition-all hover:scale-[1.01] shadow-2xs bg-blue-500/15 border-blue-500/40 text-blue-300"
+                >
+                  <Badge variant="outline" className="font-bold text-[9px] uppercase tracking-wider px-1 py-0 h-3.5 bg-background/80 shrink-0 border-blue-500/30 text-blue-400">
+                    IN {item.distance} LINE{item.distance > 1 ? 'S' : ''}
+                  </Badge>
+                  {cueLines.length > 1 ? (
+                    <div className="flex flex-col gap-0.5">
+                      {cueLines.map((l, lIdx) => (
+                        <span key={lIdx} className="font-mono text-[10px] font-medium whitespace-nowrap flex items-center gap-1">
+                          {l.type === 'lighting' ? (
+                            <Lightbulb className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+                          ) : l.type === 'audio' ? (
+                            <Music className="w-2.5 h-2.5 text-purple-300 shrink-0" />
+                          ) : (
+                            <FileText className="w-2.5 h-2.5 text-blue-300 shrink-0" />
+                          )}
+                          <span>{l.text}</span>
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1 font-mono text-[10px] font-medium whitespace-nowrap">
+                      {item.type === 'lighting' ? (
+                        <Lightbulb className="w-2.5 h-2.5 text-amber-300 shrink-0" />
+                      ) : item.type === 'audio' ? (
+                        <Music className="w-2.5 h-2.5 text-purple-300 shrink-0" />
+                      ) : (
+                        <FileText className="w-2.5 h-2.5 text-blue-300 shrink-0" />
+                      )}
+                      <span>{item.block.cue}</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
 
       {/* Script Lines Content Container (Continuous List, No Gaps) */}
-      <div
-        ref={listContainerRef}
-        className="relative flex-1 min-h-0 overflow-y-auto bg-card"
-      >
+      <div className="relative flex-1 min-h-0 bg-card overflow-hidden">
+        {/* Floating Re-sync Pill when user scrolled away */}
+        {isScrolledAway && activeBlock && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 pointer-events-auto">
+            <Button
+              type="button"
+              size="xs"
+              onClick={handleResyncClick}
+              className="h-7 px-3.5 text-[11px] shadow-2xl bg-primary text-primary-foreground hover:bg-primary/90 rounded-full font-semibold animate-in fade-in slide-in-from-top-2 border border-primary-foreground/10 cursor-pointer"
+            >
+              <span>Re-sync to Line #{activeBlock.order_index + 1}</span>
+            </Button>
+          </div>
+        )}
+
+        <div
+          ref={listContainerRef}
+          onScroll={handleScroll}
+          className="absolute inset-0 overflow-y-auto"
+        >
         {/* No active stream incoming alert overlay */}
         {!isPlaybackMode && hasLiveStream === false && !isStreamAlertDismissed && (
           <div className="sticky top-0 inset-x-0 z-30 p-4 flex items-center justify-center pointer-events-auto">
@@ -1711,7 +2006,7 @@ export default function ScriptTracker({
           ) : (
             displayBlocks.map((block) => {
               const isActive = block.id === activeBlockId;
-              const cueType = getCueType(block.cue);
+              const cueLines = parseCueLines(block.cue);
 
               return (
                 <div
@@ -1719,22 +2014,22 @@ export default function ScriptTracker({
                   data-block-id={block.id}
                   ref={isActive ? activeBlockRef : null}
                   onClick={() => handleJumpToBlock(block)}
-                  className={`group relative flex flex-col gap-1.5 transition-colors cursor-pointer px-3.5 py-2.5 ${
+                  className={`group relative flex flex-col gap-1 transition-colors cursor-pointer px-3 py-1.5 ${
                     isActive
                       ? 'bg-primary/10 border-l-4 border-l-primary shadow-sm'
                       : 'border-l-4 border-l-transparent hover:bg-muted/40'
                   }`}
                 >
-                  {/* Line Header: Line Number & Speaker Name in ONE LINE */}
-                  <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-[10px] font-mono text-muted-foreground select-none font-semibold w-7 shrink-0">
+                  {/* Line Header: Line Number & Speaker Name on Left, Cues on Right */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      <span className="text-[10px] font-mono text-muted-foreground select-none font-semibold w-6 shrink-0">
                         #{block.order_index + 1}
                       </span>
 
                       {block.speaker ? (
                         <span
-                          className={`px-1.5 py-0.5 rounded text-xs font-semibold capitalize truncate max-w-[200px] border ${getSpeakerColor(
+                          className={`px-1.5 py-0 h-4 inline-flex items-center rounded text-[11px] font-semibold capitalize truncate max-w-[180px] border leading-none ${getSpeakerColor(
                             block.speaker
                           )}`}
                           title={block.speaker}
@@ -1742,7 +2037,7 @@ export default function ScriptTracker({
                           {block.speaker}
                         </span>
                       ) : (
-                        <span className="text-xs text-muted-foreground/60 italic select-none">
+                        <span className="text-[11px] text-muted-foreground/60 italic select-none">
                           Stage / Action
                         </span>
                       )}
@@ -1751,7 +2046,7 @@ export default function ScriptTracker({
                       {isPerformanceBlock(block) && (
                         <span
                           onClick={(e) => handleToggleBlockPerformance(e, block)}
-                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-sm cursor-pointer hover:bg-orange-500/25 transition-all"
+                          className="inline-flex items-center gap-0.5 px-1.5 py-0 h-4 rounded text-[9px] font-bold uppercase tracking-wider bg-orange-500/15 border border-orange-500/40 text-orange-400 shrink-0 shadow-2xs cursor-pointer hover:bg-orange-500/25 transition-all leading-none"
                           title={isSMOrAdmin ? "Performance line (Click to toggle)" : "Live Song / Performance Act"}
                         >
                           <Music className="w-2.5 h-2.5 text-orange-400 shrink-0" />
@@ -1768,7 +2063,7 @@ export default function ScriptTracker({
                             e.stopPropagation();
                             onSeek?.(blockTimestamps.get(block.id)!);
                           }}
-                          className="h-5 px-1.5 text-[9px] font-mono gap-1 shrink-0"
+                          className="h-4 px-1 text-[9px] font-mono gap-0.5 shrink-0"
                           title="Jump video playback to this line"
                         >
                           <Play className="w-2 h-2 fill-current" />
@@ -1777,39 +2072,40 @@ export default function ScriptTracker({
                       )}
 
                       {isActive && isPlaybackMode && (
-                        <Badge variant="default" className="text-[9px] px-1 py-0 h-4 font-mono font-bold shrink-0">
+                        <Badge variant="default" className="text-[8px] px-1 py-0 h-3.5 font-mono font-bold shrink-0">
                           PLAYING
                         </Badge>
                       )}
                     </div>
 
-                    {/* Right Side: Technical Notes & Cues */}
-                    <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                      {block.cue && (
+                    {/* Right Side: Technical Notes & Cues (Stacked in 2 lines if multiple cues like sound & lights) */}
+                    <div className="flex flex-col items-end gap-0.5 shrink-0 ml-auto">
+                      {cueLines.map((cueItem, cIdx) => (
                         <span
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-mono font-medium max-w-xs truncate ${
-                            cueType === 'lighting'
+                          key={cIdx}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0 h-[18px] rounded border text-[10px] font-mono font-medium max-w-[240px] sm:max-w-xs truncate shadow-2xs leading-none ${
+                            cueItem.type === 'lighting'
                               ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                              : cueType === 'audio'
+                              : cueItem.type === 'audio'
                               ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
                               : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
                           }`}
-                          title={block.cue}
+                          title={cueItem.text}
                         >
-                          {cueType === 'lighting' ? (
-                            <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
-                          ) : cueType === 'audio' ? (
-                            <Music className="w-3 h-3 text-purple-400 shrink-0" />
+                          {cueItem.type === 'lighting' ? (
+                            <Lightbulb className="w-2.5 h-2.5 text-amber-400 shrink-0" />
+                          ) : cueItem.type === 'audio' ? (
+                            <Music className="w-2.5 h-2.5 text-purple-400 shrink-0" />
                           ) : (
-                            <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                            <FileText className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
                           )}
-                          <span className="truncate">{block.cue}</span>
+                          <span className="truncate">{cueItem.text}</span>
                         </span>
-                      )}
+                      ))}
 
                       {block.notes && (
                         <span
-                          className="text-[11px] text-muted-foreground font-mono max-w-xs truncate"
+                          className="text-[10px] text-muted-foreground font-mono max-w-[200px] truncate"
                           title={block.notes}
                         >
                           {block.notes}
@@ -1820,21 +2116,21 @@ export default function ScriptTracker({
                         <button
                           type="button"
                           onClick={(e) => handleToggleBlockPerformance(e, block)}
-                          className={`p-1 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
+                          className={`p-0.5 rounded text-[10px] transition-all flex items-center gap-1 shrink-0 ${
                             block.is_performance
                               ? 'text-orange-400 hover:text-orange-300'
                               : 'opacity-0 group-hover:opacity-60 hover:!opacity-100 text-muted-foreground hover:text-orange-400'
                           }`}
                           title={block.is_performance ? "Remove performance tag" : "Tag line as performance act / musical number"}
                         >
-                          <Music className="w-3 h-3" />
+                          <Music className="w-2.5 h-2.5" />
                         </button>
                       )}
                     </div>
                   </div>
 
                   {/* Below: Dialogue */}
-                  <div className="pl-9 pr-2">
+                  <div className="pl-7 pr-1">
                     <DialogueContent
                       text={block.dialogue}
                       isActive={isActive}
@@ -1847,24 +2143,45 @@ export default function ScriptTracker({
           )}
         </div>
       </div>
+    </div>
 
       {/* Teleprompter Mode Active Bottom Banner */}
       {teleprompterMode && activeBlock && (
-        <div className="p-4 bg-[#0c0e16] border-t border-[#1e2638] flex items-center justify-between">
+        <div className="p-3 bg-[#0c0e16] border-t border-[#1e2638] flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
-            <span className="text-sm font-bold text-slate-200">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-ping" />
+            <span className="text-xs font-bold text-slate-200">
               Current Speaker: <strong className="text-emerald-400">{activeBlock.speaker || 'Stage'}</strong>
             </span>
             {activeBlock.cue && (
-              <span className="text-xs text-amber-300 bg-amber-500/20 border border-amber-500/30 px-2.5 py-0.5 rounded-full font-mono max-w-xs sm:max-w-md break-words whitespace-normal">
-                CUE: {activeBlock.cue}
-              </span>
+              <div className="flex flex-col gap-1 max-w-sm sm:max-w-md">
+                {parseCueLines(activeBlock.cue).map((c, i) => (
+                  <span
+                    key={i}
+                    className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-mono text-[11px] border leading-tight ${
+                      c.type === 'lighting'
+                        ? 'text-amber-300 bg-amber-500/20 border-amber-500/30'
+                        : c.type === 'audio'
+                        ? 'text-purple-300 bg-purple-500/20 border-purple-500/30'
+                        : 'text-emerald-300 bg-emerald-500/20 border-emerald-500/30'
+                    }`}
+                  >
+                    {c.type === 'lighting' ? (
+                      <Lightbulb className="w-3 h-3 text-amber-400 shrink-0" />
+                    ) : c.type === 'audio' ? (
+                      <Music className="w-3 h-3 text-purple-400 shrink-0" />
+                    ) : (
+                      <FileText className="w-3 h-3 text-emerald-400 shrink-0" />
+                    )}
+                    <span>{c.text}</span>
+                  </span>
+                ))}
+              </div>
             )}
           </div>
           <button
             onClick={() => setTeleprompterMode(false)}
-            className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold"
+            className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg text-xs font-semibold"
           >
             Exit Teleprompter
           </button>

@@ -691,22 +691,19 @@ function EventContent() {
                     className="h-full min-h-[460px] lg:min-h-0"
                   />
                 ) : (
-                  <Card className="flex flex-col justify-between opacity-60 h-full min-h-[220px] lg:min-h-0">
-                    <CardHeader>
-                      <div className="flex items-center gap-2 mb-1">
-                        <Mic className="w-4 h-4 text-muted-foreground" />
-                        <CardTitle className="text-xs font-bold uppercase tracking-wider">
+                  <div className="bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col justify-between opacity-60 h-full min-h-[220px] lg:min-h-0 shadow-2xl text-card-foreground">
+                    <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-muted/30 z-10 shrink-0">
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <Mic className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <span className="text-xs font-bold text-foreground uppercase tracking-wider truncate">
                           Crew Walkie-Talkie
-                        </CardTitle>
+                        </span>
                       </div>
-                      <CardDescription className="text-xs">
-                        Voice channel restricted to stage managers and crew members.
-                      </CardDescription>
-                    </CardHeader>
-                    <CardContent className="py-6 text-center text-xs text-muted-foreground">
+                    </div>
+                    <div className="p-6 text-center text-xs text-muted-foreground">
                       Walkie-Talkie requires Crew or Stage Manager privileges.
-                    </CardContent>
-                  </Card>
+                    </div>
+                  </div>
                 )}
               </div>
 

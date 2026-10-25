@@ -370,28 +370,28 @@ export function LivePlayer({
       )}
     >
       {/* Player Header Bar */}
-      <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-muted/30 z-10">
-        <div className="flex items-center gap-2.5">
-          <Tv className="w-4 h-4 text-primary" />
-          <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+      <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-muted/30 z-10 shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <Tv className="w-4 h-4 text-primary shrink-0" />
+          <span className="text-xs font-bold text-foreground uppercase tracking-wider truncate">
             Live Program Feed
           </span>
 
           {/* Audio Ducking / Muting Indicators for Walkie-Talkie */}
           {isSpeaker && (
-            <Badge variant="destructive" className="font-mono text-[9px] uppercase font-bold tracking-wider animate-pulse flex items-center gap-1 bg-red-600 h-5 px-1.5">
+            <Badge variant="destructive" className="font-mono text-[9px] uppercase font-bold tracking-wider animate-pulse flex items-center gap-1 bg-red-600 h-5 px-1.5 shrink-0">
               <VolumeX className="w-2.5 h-2.5" />
               <span>MUTED</span>
             </Badge>
           )}
           {isListener && (
-            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 h-5 px-1.5">
+            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 h-5 px-1.5 shrink-0">
               <Volume2 className="w-2.5 h-2.5 text-amber-400" />
               <span>DUCKED 50%</span>
             </Badge>
           )}
           {!isSpeaker && !isListener && isPlayingCall && (
-            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 h-5 px-1.5">
+            <Badge variant="secondary" className="font-mono text-[9px] uppercase font-bold tracking-wider flex items-center gap-1 bg-amber-500/20 text-amber-300 border border-amber-500/30 h-5 px-1.5 shrink-0">
               <Volume2 className="w-2.5 h-2.5 text-amber-400" />
               <span>DUCKED 50%</span>
             </Badge>
@@ -399,7 +399,7 @@ export function LivePlayer({
         </div>
 
         {/* Right Action Controls: Video Settings, Mark Moment, Popout */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 ml-auto">
           {/* Video Settings Menu */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
