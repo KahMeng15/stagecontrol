@@ -3,25 +3,12 @@
 import React from 'react';
 import {
   Mic,
-  MicOff,
   Radio,
-  Lock,
-  Unlock,
-  Users,
-  Play,
-  Pause,
   ExternalLink,
   Volume2,
-  VolumeX,
-  Clock,
-  Sparkles,
-  ArrowDown,
   ArrowUp,
 } from 'lucide-react';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { RoleBadge } from '@/components/RoleBadge';
 import { WalkieCall, WalkieActiveSpeaker, WalkiePresenceUser, getAudioMediaUrl } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -136,11 +123,21 @@ function WalkieRecentCallItem({
 
   return (
     <div
-      className={`p-2.5 rounded-lg border text-xs transition-all space-y-1.5 shadow-2xs ${
+      role="button"
+      tabIndex={0}
+      onClick={onTogglePlay}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onTogglePlay();
+        }
+      }}
+      className={cn(
+        "p-2.5 rounded-lg border text-xs transition-all space-y-1.5 shadow-2xs cursor-pointer select-none",
         isPlaying
-          ? 'bg-primary/5 border-primary/40 shadow-sm'
-          : 'bg-card/80 hover:bg-card border-border/60'
-      }`}
+          ? "bg-primary/10 border-primary/50 shadow-sm ring-1 ring-primary/30"
+          : "bg-card/80 hover:bg-card hover:border-border border-border/60"
+      )}
     >
       {/* Native HTML5 Audio Element in DOM tree with walkie tags */}
       <audio
@@ -152,46 +149,24 @@ function WalkieRecentCallItem({
       />
 
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {/* Play / Pause button */}
-          <button
-            type="button"
-            onClick={onTogglePlay}
-            className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 shadow-sm transition-transform active:scale-95 ${
-              isPlaying
-                ? 'bg-amber-500 hover:bg-amber-600 text-white animate-pulse'
-                : 'bg-primary text-primary-foreground hover:bg-primary/90'
-            }`}
-            title={isPlaying ? 'Pause audio' : 'Play audio recording'}
-          >
-            {isPlaying ? (
-              <Pause className="w-3.5 h-3.5" />
-            ) : (
-              <Play className="w-3.5 h-3.5 ml-0.5" />
-            )}
-          </button>
-
-          <div className="flex items-center gap-1.5 min-w-0 truncate">
-            <span className="font-semibold text-foreground truncate">
-              {call.caller_name}
-            </span>
-            <RoleBadge role={call.caller_role} />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground shrink-0 font-mono">
-          <Clock className="w-3 h-3 text-muted-foreground/70" />
-          <span>{formatTimeOnly(call.created_at)}</span>
-          <span>•</span>
-          <span className="bg-background/80 px-1.5 py-0.5 rounded border border-border/50">
-            {formatSeconds(isPlaying ? currentTime : call.duration_seconds)}
+        <div className="flex items-center gap-1.5 min-w-0">
+          {isPlaying && <Volume2 className="w-3.5 h-3.5 text-primary animate-pulse shrink-0" />}
+          <span className="font-semibold text-foreground truncate">
+            {call.caller_name}
           </span>
         </div>
+
+        <span className="text-[10px] text-muted-foreground shrink-0 font-mono">
+          {formatTimeOnly(call.created_at)}
+        </span>
       </div>
 
       {/* Playback Scrubber when playing */}
       {isPlaying && (
-        <div className="pl-9 pr-1 flex items-center gap-2 animate-in fade-in duration-150">
+        <div
+          className="flex items-center gap-2 animate-in fade-in duration-150 py-0.5"
+          onClick={(e) => e.stopPropagation()}
+        >
           <input
             type="range"
             min="0"
@@ -207,8 +182,8 @@ function WalkieRecentCallItem({
         </div>
       )}
 
-      {/* FULL TRANSCRIPTION MESSAGE (NO TRUNCATION) */}
-      <div className="pl-9 pr-1">
+      {/* Transcription message */}
+      <div>
         {call.status === 'transcribing' ? (
           <span className="text-muted-foreground italic text-[11px] flex items-center gap-1">
             <span className="w-2 h-2 rounded-full border border-primary border-t-transparent animate-spin" />
@@ -225,19 +200,16 @@ function WalkieRecentCallItem({
 }
 
 export function WalkieCard({
-  voiceRoom,
   isConnected,
   isTransmitting,
   isHandsFree,
   audioLevel,
   incomingSpeaker,
   incomingAudioLevel,
-  connectedUsers,
   channelBusyMessage,
   recentCalls,
   onStartTransmission,
   onStopTransmission,
-  onToggleTransmission,
   onOpenCommsTab,
   onPlaybackChange,
   className,
@@ -258,34 +230,40 @@ export function WalkieCard({
 
   // Auto-scroll & scroll-position tracking
   const feedRef = React.useRef<HTMLDivElement | null>(null);
-  const [isAutoScroll, setIsAutoScroll] = React.useState(true);
-  const [isScrolledDown, setIsScrolledDown] = React.useState(false);
+  const [isScrolledAway, setIsScrolledAway] = React.useState(false);
+  const isAtTopRef = React.useRef(true);
 
-  // Auto-scroll effect on new incoming calls
+  // Auto-scroll to top on new calls ONLY IF user is at the top
   React.useEffect(() => {
-    if (isAutoScroll && feedRef.current) {
+    if (isAtTopRef.current && feedRef.current) {
       feedRef.current.scrollTo({ top: 0, behavior: 'smooth' });
     }
-  }, [recentCalls, isAutoScroll]);
+  }, [recentCalls]);
 
   const handleFeedScroll = () => {
     if (!feedRef.current) return;
-    const scrolled = feedRef.current.scrollTop > 30;
-    setIsScrolledDown(scrolled);
+    const isAway = feedRef.current.scrollTop > 20;
+    isAtTopRef.current = !isAway;
+    setIsScrolledAway(isAway);
   };
 
   const scrollToLatest = () => {
     if (feedRef.current) {
       feedRef.current.scrollTo({ top: 0, behavior: 'smooth' });
-      setIsScrolledDown(false);
-      setIsAutoScroll(true);
+      isAtTopRef.current = true;
+      setIsScrolledAway(false);
     }
   };
 
   const isSomeoneElseSpeaking = !!incomingSpeaker;
 
   return (
-    <Card className={cn("flex flex-col border-border/70 shadow-sm relative overflow-hidden", className)}>
+    <div
+      className={cn(
+        "bg-card border border-border/60 rounded-2xl overflow-hidden flex flex-col relative group shadow-2xl text-card-foreground",
+        className
+      )}
+    >
       {/* Active speaker backdrop glow */}
       {isTransmitting && (
         <div className="absolute inset-0 bg-red-500/5 pointer-events-none animate-pulse" />
@@ -294,135 +272,77 @@ export function WalkieCard({
         <div className="absolute inset-0 bg-blue-500/5 pointer-events-none animate-pulse" />
       )}
 
-      {/* Card Header */}
-      <CardHeader className="pb-3 border-b border-border/40 shrink-0">
-        <div className="flex items-center justify-between mb-1">
-          <div className="flex items-center gap-2">
-            <Radio className={`w-4 h-4 ${isTransmitting ? 'text-destructive animate-pulse' : 'text-emerald-400'}`} />
-            <CardTitle className="text-xs font-bold uppercase tracking-wider">
-              Crew Walkie-Talkie
-            </CardTitle>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge
-              variant="outline"
-              className={`text-[10px] ${
-                isConnected
-                  ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10'
-                  : 'border-muted text-muted-foreground'
-              }`}
-            >
-              {isConnected ? 'LIVE COMMS' : 'CONNECTING...'}
-            </Badge>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={onOpenCommsTab}
-              className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            >
-              Full View <ExternalLink className="w-3 h-3 ml-1" />
-            </Button>
-          </div>
-        </div>
-        <CardDescription className="text-xs flex items-center justify-between">
-          <span>Push-to-talk voice channel for stage directors & crew.</span>
-          <span className="flex items-center gap-1 text-[11px] text-muted-foreground">
-            <Users className="w-3 h-3" />
-            <strong>{connectedUsers.length}</strong> online
+      {/* Card Header Bar */}
+      <div className="px-4 py-3 border-b border-border/60 flex items-center justify-between gap-3 bg-muted/30 z-10 shrink-0">
+        <div className="flex items-center gap-2">
+          <Radio className={cn("w-4 h-4", isTransmitting ? "text-destructive animate-pulse" : "text-primary")} />
+          <span className="text-xs font-bold text-foreground uppercase tracking-wider">
+            Crew Walkie-Talkie
           </span>
-        </CardDescription>
-      </CardHeader>
+        </div>
 
-      <CardContent className="p-4 flex flex-col flex-1 min-h-0 gap-3">
-        {/* SECTION 1: RECENT VOICE CALLS (Expands flexibly to fill available vertical space) */}
-        <div className="flex-1 flex flex-col min-h-0 space-y-2">
-          <div className="flex items-center justify-between text-[11px] font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
-            <div className="flex items-center gap-1.5 text-foreground">
-              <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
-              <span>Recent Calls & Transcripts</span>
-              {recentCalls.length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 bg-muted text-foreground/80 rounded-full font-mono font-bold">
-                  {recentCalls.length}
-                </span>
-              )}
-            </div>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          onClick={onOpenCommsTab}
+          title="Open Full Comms"
+          className="rounded text-muted-foreground hover:text-foreground"
+        >
+          <ExternalLink className="w-3.5 h-3.5" />
+        </Button>
+      </div>
 
-            <div className="flex items-center gap-2">
-              {/* Auto-Scroll Toggle Button */}
-              <button
-                type="button"
-                onClick={() => setIsAutoScroll((prev) => !prev)}
-                className={`text-[10px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 font-mono ${
-                  isAutoScroll
-                    ? 'border-emerald-500/40 text-emerald-400 bg-emerald-500/10 font-bold'
-                    : 'border-border/70 text-muted-foreground hover:text-foreground'
-                }`}
-                title="Toggle automatic scrolling to latest calls"
-              >
-                <ArrowDown className={`w-3 h-3 ${isAutoScroll ? 'text-emerald-400 animate-bounce' : ''}`} />
-                <span>Auto-Scroll: {isAutoScroll ? 'ON' : 'OFF'}</span>
-              </button>
-
-              {recentCalls.length > 0 && (
-                <button
-                  type="button"
-                  onClick={onOpenCommsTab}
-                  className="text-primary hover:underline lowercase font-normal"
-                >
-                  view all
-                </button>
-              )}
-            </div>
-          </div>
-
-          {/* Calls Feed Container with Flexible Height & Auto Scroll */}
-          <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl p-2">
-            <div
-              ref={feedRef}
-              onScroll={handleFeedScroll}
-              className="absolute inset-0 overflow-y-auto space-y-2 p-2 scroll-smooth"
-            >
-              {recentCalls.length === 0 ? (
-                <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-border/60 bg-muted/20 text-center space-y-1">
-                  <p className="text-xs font-semibold text-foreground">No recorded calls yet</p>
-                  <p className="text-[11px] text-muted-foreground max-w-xs">
-                    Hold the button below or press <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border/60">[SPACE]</kbd> to broadcast a voice message to all online crew.
-                  </p>
-                </div>
-              ) : (
-                recentCalls.map((call) => (
-                  <WalkieRecentCallItem
-                    key={call.id}
-                    call={call}
-                    isPlaying={playingCallId === call.id}
-                    onTogglePlay={() => {
-                      setPlayingCallId((prev) => (prev === call.id ? null : call.id));
-                    }}
-                    onPlaybackEnded={() => {
-                      setPlayingCallId((prev) => (prev === call.id ? null : prev));
-                    }}
-                  />
-                ))
-              )}
-            </div>
-
-            {/* Jump to Latest Floating Button */}
-            {isScrolledDown && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
-                <Button
-                  size="xs"
-                  onClick={scrollToLatest}
-                  className="h-7 px-3 text-[11px] shadow-xl bg-primary text-primary-foreground hover:bg-primary/90 rounded-full gap-1.5 font-semibold animate-in fade-in slide-in-from-top-2"
-                >
-                  <ArrowUp className="w-3.5 h-3.5" />
-                  <span>Jump to Latest Call</span>
-                </Button>
+      {/* Card Content */}
+      <div className="p-4 flex flex-col flex-1 min-h-0 gap-3">
+        {/* RECENT VOICE CALLS (Expands flexibly to fill available vertical space) */}
+        <div className="flex-1 min-h-0 relative bg-muted/15 border border-border/40 rounded-xl p-2">
+          <div
+            ref={feedRef}
+            onScroll={handleFeedScroll}
+            className="absolute inset-0 overflow-y-auto space-y-2 p-2 scroll-smooth"
+          >
+            {recentCalls.length === 0 ? (
+              <div className="h-full min-h-[140px] flex flex-col items-center justify-center p-4 rounded-xl border border-dashed border-border/60 bg-muted/20 text-center space-y-1">
+                <p className="text-xs font-semibold text-foreground">No recorded calls yet</p>
+                <p className="text-[11px] text-muted-foreground max-w-xs">
+                  Hold the button below or press <kbd className="px-1 py-0.5 rounded bg-muted text-[10px] font-mono border border-border/60">[SPACE]</kbd> to broadcast a voice message to all online crew.
+                </p>
               </div>
+            ) : (
+              recentCalls.map((call) => (
+                <WalkieRecentCallItem
+                  key={call.id}
+                  call={call}
+                  isPlaying={playingCallId === call.id}
+                  onTogglePlay={() => {
+                    setPlayingCallId((prev) => (prev === call.id ? null : call.id));
+                  }}
+                  onPlaybackEnded={() => {
+                    setPlayingCallId((prev) => (prev === call.id ? null : prev));
+                  }}
+                />
+              ))
             )}
           </div>
+
+          {/* View Latest Call Floating Button */}
+          {isScrolledAway && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 pointer-events-auto">
+              <Button
+                type="button"
+                size="xs"
+                onClick={scrollToLatest}
+                className="h-7 px-3 text-[11px] shadow-xl bg-primary text-primary-foreground hover:bg-primary/90 rounded-full gap-1.5 font-semibold animate-in fade-in slide-in-from-top-2"
+              >
+                <ArrowUp className="w-3.5 h-3.5" />
+                <span>View Latest Call</span>
+              </Button>
+            </div>
+          )}
         </div>
 
-        {/* SECTION 2: PUSH-TO-TALK CONSOLE & GIANT BUTTON (Anchored firmly below recent calls) */}
+        {/* PUSH-TO-TALK CONSOLE & GIANT BUTTON */}
         <div className="shrink-0 flex flex-col items-center justify-center py-5 px-3 bg-muted/40 rounded-xl border border-border/50 relative">
           {/* Radial Equalizer Wave Ring */}
           {(isTransmitting || isSomeoneElseSpeaking) && (
@@ -458,7 +378,7 @@ export function WalkieCard({
                 ? 'bg-destructive text-white shadow-destructive/40 border-4 border-white ring-4 ring-destructive/40'
                 : isSomeoneElseSpeaking
                 ? 'bg-blue-600 text-white shadow-blue-500/30 border-2 border-blue-400 cursor-not-allowed'
-                : 'bg-gradient-to-b from-card to-muted hover:from-muted hover:to-muted/80 text-foreground border-2 border-border/80 hover:border-emerald-500/50 shadow-black/20'
+                : 'bg-gradient-to-b from-card to-muted hover:from-muted hover:to-muted/80 text-foreground border-2 border-border/80 hover:border-primary/50 shadow-black/20'
             }`}
           >
             {isTransmitting ? (
@@ -477,7 +397,7 @@ export function WalkieCard({
               </>
             ) : (
               <>
-                <Mic className="w-7 h-7 mb-1 text-emerald-400 group-hover:scale-110 transition-transform" />
+                <Mic className="w-7 h-7 mb-1 text-primary group-hover:scale-110 transition-transform" />
                 <span className="text-[10px] font-bold tracking-wider uppercase text-foreground">
                   HOLD TO TALK
                 </span>
@@ -485,22 +405,11 @@ export function WalkieCard({
             )}
           </button>
 
-          {/* Spacebar & Hands-Free Toggle */}
-          <div className="flex items-center gap-3 mt-3 text-[11px] text-muted-foreground z-10">
+          {/* Spacebar to Talk */}
+          <div className="flex items-center justify-center mt-3 text-[11px] text-muted-foreground z-10">
             <span className="inline-flex items-center gap-1 font-mono text-[10px] bg-background/80 px-2 py-0.5 rounded border border-border/60">
               [SPACE] to Talk
             </span>
-            <span>•</span>
-            <button
-              type="button"
-              onClick={onToggleTransmission}
-              className={`inline-flex items-center gap-1 text-[11px] font-medium transition-colors hover:text-foreground ${
-                isHandsFree ? 'text-emerald-400 font-bold' : ''
-              }`}
-            >
-              {isHandsFree ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
-              {isHandsFree ? 'Locked ON' : 'Toggle Lock'}
-            </button>
           </div>
 
           {/* Busy warning */}
@@ -509,12 +418,8 @@ export function WalkieCard({
               {channelBusyMessage}
             </div>
           )}
-
-          <span className="text-[10px] text-muted-foreground mt-2 font-mono">
-            Room: <strong className="text-foreground">{voiceRoom || 'connecting...'}</strong>
-          </span>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
